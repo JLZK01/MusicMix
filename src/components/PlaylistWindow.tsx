@@ -17,7 +17,10 @@ import {
   ArrowUp,
   ArrowDown,
   RefreshCw,
-  CheckCircle2
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Filter
 } from 'lucide-react';
 import { Song, SongMix, RandomizeFilterOption, HarmonicMatchResult, TonalityFilterOption } from '../types/music';
 import {
@@ -58,6 +61,9 @@ export const PlaylistWindow: React.FC<PlaylistWindowProps> = ({
   const [isRolling, setIsRolling] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+
+  // Collapsible detailed filter mode drawer (collapsed by default to prevent vertical scrolling)
+  const [showDetailedFilters, setShowDetailedFilters] = useState(false);
 
   // Refresh data state (rate-limited up to 15 songs/second)
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
@@ -141,6 +147,71 @@ export const PlaylistWindow: React.FC<PlaylistWindowProps> = ({
         recommendCount,
         false,
         val
+      );
+      setRecommendedResults(matches);
+    }
+  };
+
+  // Quick Filter Preset Dropdown Helper
+  const getFilterPresetValue = (): string => {
+    if (tonalityFilter === 'minor') return 'minor_only';
+    if (tonalityFilter === 'major') return 'major_only';
+    if (activeFilters.includes('BPM') && activeFilters.includes('KEY') && activeFilters.includes('Genre')) return 'all';
+    if (activeFilters.includes('BPM') && activeFilters.includes('KEY')) return 'bpm_key';
+    if (activeFilters.includes('KEY')) return 'key_only';
+    if (activeFilters.includes('BPM')) return 'bpm_only';
+    if (activeFilters.length === 0) return 'none';
+    return 'custom';
+  };
+
+  const handleFilterPresetChange = (preset: string) => {
+    let newFilters: RandomizeFilterOption[] = ['BPM', 'KEY'];
+    let newTonality: TonalityFilterOption = 'mixed';
+
+    switch (preset) {
+      case 'bpm_key':
+        newFilters = ['BPM', 'KEY'];
+        newTonality = 'mixed';
+        break;
+      case 'key_only':
+        newFilters = ['KEY'];
+        newTonality = 'mixed';
+        break;
+      case 'bpm_only':
+        newFilters = ['BPM'];
+        newTonality = 'mixed';
+        break;
+      case 'all':
+        newFilters = ['BPM', 'KEY', 'Genre'];
+        newTonality = 'mixed';
+        break;
+      case 'minor_only':
+        newFilters = ['BPM', 'KEY'];
+        newTonality = 'minor';
+        break;
+      case 'major_only':
+        newFilters = ['BPM', 'KEY'];
+        newTonality = 'major';
+        break;
+      case 'none':
+        newFilters = [];
+        newTonality = 'mixed';
+        break;
+      default:
+        break;
+    }
+
+    setActiveFilters(newFilters);
+    setTonalityFilter(newTonality);
+
+    if (selectedTrack && playlist.length > 1) {
+      const matches = recommendTracksFromPlaylist(
+        selectedTrack,
+        playlist,
+        newFilters,
+        recommendCount,
+        false,
+        newTonality
       );
       setRecommendedResults(matches);
     }
@@ -817,146 +888,30 @@ export const PlaylistWindow: React.FC<PlaylistWindowProps> = ({
           </div>
 
           {/* ============================================================== */}
-          {/* RECOMMENDATION AREA WITH TONALITY & COUNT SLIDERS (UP TO 20) */}
+          {/* RECOMMENDATION AREA WITH COLLAPSIBLE FILTERS (ZERO SCROLLING) */}
           {/* ============================================================== */}
-          <div className="rounded-2xl bg-zinc-900/90 border border-violet-500/30 p-4 shadow-2xl backdrop-blur-xl relative overflow-hidden space-y-3">
+          <div className="rounded-2xl bg-zinc-900/90 border border-violet-500/30 p-3.5 shadow-2xl backdrop-blur-xl relative overflow-hidden space-y-2.5">
             <div className="absolute bottom-0 right-0 w-60 h-60 bg-violet-500/10 rounded-full blur-2xl pointer-events-none" />
 
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+            {/* Header with Quick Info */}
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-violet-400" />
                 <h3 className="text-xs font-mono uppercase tracking-wider text-violet-400 font-semibold">
                   PLAYLIST RECOMMENDATION & RANDOMIZER
                 </h3>
               </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/30 font-bold">
+                {recommendCount} {recommendCount === 1 ? 'Track' : 'Tracks'}
+              </span>
             </div>
 
-            {/* Filter Mode Selector Buttons (Compact) */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
-                <span>FILTER MODES (MULTI-SELECT):</span>
-                <span className="text-violet-400 font-semibold">
-                  {activeFilters.length === 0 ? 'None (Broad)' : `${activeFilters.length} Active`}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-3 gap-1.5">
-                {(['BPM', 'KEY', 'Genre'] as RandomizeFilterOption[]).map((option) => {
-                  const isChecked = activeFilters.includes(option);
-                  return (
-                    <button
-                      key={option}
-                      onClick={() => toggleFilter(option)}
-                      className={`px-2 py-1.5 rounded-lg text-xs font-semibold font-mono transition flex items-center justify-center gap-1 cursor-pointer border ${
-                        isChecked
-                          ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border-violet-400 shadow-sm'
-                          : 'bg-zinc-950 hover:bg-zinc-800 text-zinc-400 border-zinc-800 hover:text-white'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${isChecked ? 'bg-white' : 'bg-zinc-600'}`} />
-                      <span>{option}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* NEW: TONALITY FILTER SLIDER (Minor, Mixed, Major) */}
-            <div className="p-2.5 rounded-xl bg-zinc-950/70 border border-zinc-800 space-y-1.5">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-zinc-300 font-medium flex items-center gap-1.5">
-                  <Compass className="w-3.5 h-3.5 text-cyan-400" />
-                  TONALITY FILTER SLIDER:
-                </span>
-                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                  tonalityFilter === 'minor'
-                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                    : tonalityFilter === 'major'
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                    : 'bg-violet-500/20 text-violet-300 border-violet-500/40'
-                }`}>
-                  {tonalityFilter === 'minor' ? 'MINOR (A KEYS)' : tonalityFilter === 'major' ? 'MAJOR (B KEYS)' : 'MIXED (ALL)'}
-                </span>
-              </div>
-
-              {/* 3-step slider: 0 = minor, 1 = mixed, 2 = major */}
-              <input
-                type="range"
-                min="0"
-                max="2"
-                step="1"
-                value={tonalityFilter === 'minor' ? 0 : tonalityFilter === 'major' ? 2 : 1}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  handleTonalityChange(v === 0 ? 'minor' : v === 2 ? 'major' : 'mixed');
-                }}
-                className="w-full accent-cyan-400 cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
-              />
-
-              {/* Clickable slider ticks */}
-              <div className="flex justify-between text-[10px] font-mono">
-                <button
-                  type="button"
-                  onClick={() => handleTonalityChange('minor')}
-                  className={`transition cursor-pointer px-1 py-0.5 rounded ${
-                    tonalityFilter === 'minor' ? 'text-cyan-300 font-bold bg-cyan-500/10' : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  ◀ Minor
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleTonalityChange('mixed')}
-                  className={`transition cursor-pointer px-1 py-0.5 rounded ${
-                    tonalityFilter === 'mixed' ? 'text-violet-300 font-bold bg-violet-500/10' : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  • Mixed •
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleTonalityChange('major')}
-                  className={`transition cursor-pointer px-1 py-0.5 rounded ${
-                    tonalityFilter === 'major' ? 'text-amber-300 font-bold bg-amber-500/10' : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  Major ▶
-                </button>
-              </div>
-            </div>
-
-            {/* Increasing Slider (Up to 20 songs) - Compact */}
-            <div className="p-2.5 rounded-xl bg-zinc-950/70 border border-zinc-800 space-y-1.5">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-zinc-300 font-medium flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-violet-400" />
-                  RECOMMEND COUNT SLIDER:
-                </span>
-                <span className="px-2 py-0.5 rounded bg-violet-500/20 text-violet-300 font-bold text-[10px] border border-violet-500/30">
-                  {recommendCount} {recommendCount === 1 ? 'Track' : 'Tracks'}
-                </span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="20"
-                value={recommendCount}
-                onChange={(e) => setRecommendCount(parseInt(e.target.value, 10))}
-                className="w-full accent-violet-500 cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
-              />
-              <div className="flex justify-between text-[9px] text-zinc-500 font-mono">
-                <span>1 track</span>
-                <span>10 tracks</span>
-                <span>20 tracks (Max)</span>
-              </div>
-            </div>
-
-            {/* Action Buttons - Compact */}
-            <div className="grid grid-cols-2 gap-2 pt-0.5">
+            {/* Action Buttons Right At Top (Prominent & Quick) */}
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={handleFindClosestMatch}
                 disabled={isRolling || playlist.length === 0}
-                className="py-2 px-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-violet-600/20 cursor-pointer border border-violet-400/30"
+                className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-violet-600/30 cursor-pointer border border-violet-400/40 active:scale-[0.98]"
               >
                 <SlidersHorizontal className={`w-3.5 h-3.5 ${isRolling ? 'animate-spin' : ''}`} />
                 <span>FIND CLOSEST ({recommendCount})</span>
@@ -965,12 +920,146 @@ export const PlaylistWindow: React.FC<PlaylistWindowProps> = ({
               <button
                 onClick={handlePureRandom}
                 disabled={isRolling || playlist.length === 0}
-                className="py-2 px-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-700 hover:border-fuchsia-500 text-fuchsia-300 hover:text-white font-semibold text-xs font-mono transition flex items-center justify-center gap-1.5 cursor-pointer shadow-inner"
+                className="py-2.5 px-3 rounded-xl bg-zinc-950 hover:bg-zinc-850 border border-zinc-700 hover:border-fuchsia-500 text-fuchsia-300 hover:text-white font-semibold text-xs font-mono transition flex items-center justify-center gap-1.5 cursor-pointer shadow-inner active:scale-[0.98]"
               >
                 <Shuffle className={`w-3.5 h-3.5 ${isRolling ? 'animate-spin' : ''}`} />
                 <span>🎲 RANDOM ({recommendCount})</span>
               </button>
             </div>
+
+            {/* Filter Dropdown & Collapsible Drawer Trigger */}
+            <div className="flex items-center gap-2 pt-0.5">
+              {/* Quick Filter Preset Dropdown */}
+              <div className="relative flex-1">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 hover:border-zinc-700 transition">
+                  <Filter className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                  <span className="text-[10px] font-mono text-zinc-500 uppercase shrink-0">Filter:</span>
+                  <select
+                    value={getFilterPresetValue()}
+                    onChange={(e) => handleFilterPresetChange(e.target.value)}
+                    className="w-full bg-transparent text-xs text-white focus:outline-none cursor-pointer font-medium font-mono"
+                  >
+                    <option value="bpm_key" className="bg-zinc-900 text-white">Harmonic (BPM + Key)</option>
+                    <option value="key_only" className="bg-zinc-900 text-white">Exact Key Only</option>
+                    <option value="bpm_only" className="bg-zinc-900 text-white">Tempo (BPM) Only</option>
+                    <option value="all" className="bg-zinc-900 text-white">Strict (BPM + Key + Genre)</option>
+                    <option value="minor_only" className="bg-zinc-900 text-white">Minor Tonality (A-Keys)</option>
+                    <option value="major_only" className="bg-zinc-900 text-white">Major Tonality (B-Keys)</option>
+                    <option value="none" className="bg-zinc-900 text-white">Broad (No Filter Restrictions)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Collapsible Sliders Button */}
+              <button
+                type="button"
+                onClick={() => setShowDetailedFilters(!showDetailedFilters)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-mono border flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                  showDetailedFilters
+                    ? 'bg-violet-950/50 border-violet-500/50 text-violet-300'
+                    : 'bg-zinc-950 hover:bg-zinc-800 border-zinc-800 text-zinc-400 hover:text-white'
+                }`}
+                title="Toggle detailed sliders and multi-select filter controls"
+              >
+                <span>Sliders</span>
+                {showDetailedFilters ? (
+                  <ChevronUp className="w-3.5 h-3.5 text-violet-400" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                )}
+              </button>
+            </div>
+
+            {/* Collapsible Detailed Filter Drawer */}
+            {showDetailedFilters && (
+              <div className="p-3 rounded-xl bg-zinc-950/80 border border-violet-500/20 space-y-2.5 animate-in fade-in slide-in-from-top-2">
+                {/* Multi-Select Buttons */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                    <span>ACTIVE ATTRIBUTES:</span>
+                    <span className="text-violet-400 font-semibold">
+                      {activeFilters.length === 0 ? 'Broad / None' : `${activeFilters.length} Active`}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(['BPM', 'KEY', 'Genre'] as RandomizeFilterOption[]).map((option) => {
+                      const isChecked = activeFilters.includes(option);
+                      return (
+                        <button
+                          key={option}
+                          onClick={() => toggleFilter(option)}
+                          className={`px-2 py-1 rounded-lg text-xs font-semibold font-mono transition flex items-center justify-center gap-1 cursor-pointer border ${
+                            isChecked
+                              ? 'bg-violet-600 text-white border-violet-400 shadow-sm'
+                              : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-800 hover:text-white'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isChecked ? 'bg-white' : 'bg-zinc-600'}`} />
+                          <span>{option}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Tonality 3-Step Slider */}
+                <div className="p-2 rounded-lg bg-zinc-900/60 border border-zinc-800 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono">
+                    <span className="text-zinc-300 font-medium flex items-center gap-1">
+                      <Compass className="w-3 h-3 text-cyan-400" />
+                      Tonality Slider:
+                    </span>
+                    <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${
+                      tonalityFilter === 'minor'
+                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                        : tonalityFilter === 'major'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+                    }`}>
+                      {tonalityFilter === 'minor' ? 'MINOR (A KEYS)' : tonalityFilter === 'major' ? 'MAJOR (B KEYS)' : 'MIXED'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="1"
+                    value={tonalityFilter === 'minor' ? 0 : tonalityFilter === 'major' ? 2 : 1}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      handleTonalityChange(v === 0 ? 'minor' : v === 2 ? 'major' : 'mixed');
+                    }}
+                    className="w-full accent-cyan-400 cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[9px] font-mono text-zinc-500">
+                    <span className={tonalityFilter === 'minor' ? 'text-cyan-300 font-bold' : ''}>Minor</span>
+                    <span className={tonalityFilter === 'mixed' ? 'text-violet-300 font-bold' : ''}>Mixed</span>
+                    <span className={tonalityFilter === 'major' ? 'text-amber-300 font-bold' : ''}>Major</span>
+                  </div>
+                </div>
+
+                {/* Count Slider */}
+                <div className="p-2 rounded-lg bg-zinc-900/60 border border-zinc-800 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono">
+                    <span className="text-zinc-300 font-medium flex items-center gap-1">
+                      <Layers className="w-3 h-3 text-violet-400" />
+                      Results Count:
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-violet-500/20 text-violet-300 font-bold text-[9px] border border-violet-500/30">
+                      {recommendCount} tracks
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="20"
+                    value={recommendCount}
+                    onChange={(e) => setRecommendCount(parseInt(e.target.value, 10))}
+                    className="w-full accent-violet-500 cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Recommended Songs Display List */}
             {recommendedResults.length > 0 ? (

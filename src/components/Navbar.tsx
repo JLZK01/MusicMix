@@ -1,7 +1,7 @@
 import React from 'react';
-import { Search, ListMusic, Disc3, Home, Database, Edit3, History, Layers } from 'lucide-react';
+import { Search, ListMusic, Disc3, Home, Database, Edit3, History, Layers, TrendingUp } from 'lucide-react';
 
-export type ActiveView = 'search' | 'playlist' | 'editor' | 'mixes' | 'history' | 'database';
+export type ActiveView = 'search' | 'charts' | 'playlist' | 'editor' | 'mixes' | 'history' | 'database';
 
 interface NavbarProps {
   currentView: ActiveView;
@@ -64,7 +64,24 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Search</span>
           </button>
 
-          {/* Tab 2: Central Playlist */}
+          {/* Tab 2: Top Charts */}
+          <button
+            onClick={() => onViewChange('charts')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer shrink-0 ${
+              currentView === 'charts'
+                ? 'bg-zinc-800 text-white shadow-sm border border-zinc-700/50'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+            }`}
+            title="Streaming & social media viral music charts"
+          >
+            <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+            <span>Top Charts</span>
+            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+              HOT
+            </span>
+          </button>
+
+          {/* Tab 3: Central Playlist */}
           <button
             onClick={() => onViewChange('playlist')}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer relative shrink-0 ${

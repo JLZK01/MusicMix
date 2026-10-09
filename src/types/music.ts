@@ -68,7 +68,7 @@ export interface SongMix {
 }
 
 export interface ClientSyncMessage {
-  type: 'init' | 'playlist_updated' | 'song_liked' | 'song_unliked' | 'active_users' | 'database_restored' | 'history_updated' | 'mixes_updated' | 'playlist_refresh_progress' | 'playlist_refresh_completed' | 'ping';
+  type: 'init' | 'playlist_updated' | 'song_liked' | 'song_unliked' | 'active_users' | 'database_restored' | 'history_updated' | 'mixes_updated' | 'playlist_refresh_progress' | 'playlist_refresh_completed' | 'charts_updated' | 'ping';
   playlist?: Song[];
   mixes?: SongMix[];
   mix?: SongMix;
@@ -79,4 +79,56 @@ export interface ClientSyncMessage {
   current?: number;
   total?: number;
   rateLimit?: string;
+}
+
+// --- TOP CHARTS TYPES ---
+export type ChartServiceId = 'spotify' | 'apple' | 'billboard' | 'tiktok' | 'youtube' | 'shazam';
+
+export interface ChartTrack {
+  id: string;
+  rank: number;
+  previousRank?: number;
+  peakRank?: number;
+  weeksOnChart?: number;
+  change: 'up' | 'down' | 'same' | 'new';
+  changeAmount?: number;
+  song: Song;
+  service: ChartServiceId;
+  streamsOrViews?: string;
+  trendReason?: string;
+}
+
+export interface ServiceChart {
+  serviceId: ChartServiceId;
+  serviceName: string;
+  tagline: string;
+  accentColor: string;
+  badgeBg: string;
+  lastRefreshed: number;
+  formattedLastRefreshed: string;
+  tracks: ChartTrack[];
+}
+
+export interface TopChartsData {
+  lastRefreshedAll: number;
+  formattedLastRefreshedAll: string;
+  services: Record<ChartServiceId, ServiceChart>;
+  globalHotTracks: ChartTrack[];
+}
+
+// --- ACTIVITY HISTORY TYPES (LAST 200 ACTIONS ACROSS 5 CATEGORIES) ---
+export type ActivityCategory = 'recommendation' | 'search' | 'editing' | 'mixes' | 'database';
+
+export interface ActivityHistoryItem {
+  id: string;
+  category: ActivityCategory;
+  action: string;
+  summary: string;
+  timestamp: number;
+  formattedDate: string;
+  ipAddress?: string;
+  actorId?: string;
+  details?: Record<string, any>;
+  song?: Song;
+  songs?: Song[];
 }

@@ -8,6 +8,7 @@ import { EditorPage } from './components/EditorPage';
 import { MixesPage } from './components/MixesPage';
 import { HistoryPage } from './components/HistoryPage';
 import { DatabasePage } from './components/DatabasePage';
+import { TopChartsPage } from './components/TopChartsPage';
 import { Sparkles } from 'lucide-react';
 
 function getOrCreateDeviceId(): string {
@@ -153,6 +154,10 @@ export default function App() {
               setLiveSyncToast(`Mix recorded: "${msg.mix.name}"`);
               setTimeout(() => setLiveSyncToast(null), 3000);
             }
+          } else if (msg.type === 'charts_updated') {
+            window.dispatchEvent(new CustomEvent('musicmix:charts_updated', { detail: msg }));
+          } else if (msg.type === 'history_updated') {
+            window.dispatchEvent(new CustomEvent('musicmix:history_updated', { detail: msg }));
           } else if (msg.type === 'active_users') {
             if (msg.activeCount !== undefined) {
               setActiveClientsCount(msg.activeCount);
@@ -244,6 +249,25 @@ export default function App() {
     }
   };
 
+  // Add track to playlist (used by Top Charts)
+  const handleAddToPlaylist = async (song: Song) => {
+    try {
+      const res = await fetch('/api/playlist/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(song)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.playlist) {
+          setPlaylist(data.playlist);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to add track to playlist:', err);
+    }
+  };
+
   // Delete from playlist
   const handleDeleteFromPlaylist = async (songId: string) => {
     try {
@@ -327,7 +351,20 @@ export default function App() {
               />
             )}
 
-            {/* Page 2: Central Playlist */}
+            {/* Page 2: Top Charts */}
+            {activeTab === 'charts' && (
+              <TopChartsPage
+                playlist={playlist}
+                onToggleLike={handleToggleLike}
+                onAddToPlaylist={handleAddToPlaylist}
+                onSelectTrackForStudio={(song) => {
+                  setSelectedTrack(song);
+                  setActiveTab('playlist');
+                }}
+              />
+            )}
+
+            {/* Page 3: Central Playlist */}
             {activeTab === 'playlist' && (
               <PlaylistWindow
                 playlist={playlist}

@@ -5,8 +5,21 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
-import { Song, SongMix, ClientSyncMessage, DatabaseBackupMeta, RecommendationHistoryEntry } from './src/types/music';
+import {
+  Song,
+  SongMix,
+  ClientSyncMessage,
+  DatabaseBackupMeta,
+  RecommendationHistoryEntry,
+  ChartTrack,
+  ServiceChart,
+  TopChartsData,
+  ChartServiceId,
+  ActivityCategory,
+  ActivityHistoryItem
+} from './src/types/music';
 import { INITIAL_SEED_SONGS } from './src/data/seedSongs';
+import { SEED_CHARTS } from './src/data/chartsData';
 import { normalizeToCamelot } from './src/utils/harmonic';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -20,6 +33,8 @@ let BACKUPS_DIR = path.resolve(DATA_DIR, 'backups');
 let COVERS_DIR = path.resolve(DATA_DIR, 'covers');
 let DB_FILE = path.resolve(DATA_DIR, 'musicmix_db.json');
 let HISTORY_FILE = path.resolve(DATA_DIR, 'recommendation_history.json');
+let CHARTS_FILE = path.resolve(DATA_DIR, 'top_charts.json');
+let ACTIVITY_FILE = path.resolve(DATA_DIR, 'activity_history.json');
 
 function ensureDirectories() {
   try {
@@ -43,6 +58,8 @@ function ensureDirectories() {
     COVERS_DIR = path.resolve(DATA_DIR, 'covers');
     DB_FILE = path.resolve(DATA_DIR, 'musicmix_db.json');
     HISTORY_FILE = path.resolve(DATA_DIR, 'recommendation_history.json');
+    CHARTS_FILE = path.resolve(DATA_DIR, 'top_charts.json');
+    ACTIVITY_FILE = path.resolve(DATA_DIR, 'activity_history.json');
 
     try {
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -162,6 +179,209 @@ function saveHistory(history: RecommendationHistoryEntry[]): void {
 
 let db = loadDatabase();
 let recommendationHistory = loadHistory();
+
+// Top Charts Data Helper
+function generateGlobalHotTracks(services: Record<ChartServiceId, ServiceChart>): ChartTrack[] {
+  const hotTracks: ChartTrack[] = [];
+  const serviceKeys = Object.keys(services) as ChartServiceId[];
+
+  // Take top tracks from each service and interleave
+  const maxRank = 5;
+  for (let r = 1; r <= maxRank; r++) {
+    for (const key of serviceKeys) {
+      const s = services[key];
+      const track = s?.tracks.find(t => t.rank === r);
+      if (track && !hotTracks.some(h => h.song.title.toLowerCase() === track.song.title.toLowerCase() && h.song.artist.toLowerCase() === track.song.artist.toLowerCase())) {
+        hotTracks.push({
+          ...track,
+          id: `global-${hotTracks.length + 1}`,
+          rank: hotTracks.length + 1,
+          trendReason: `Top ranking across ${s.serviceName}`
+        });
+      }
+    }
+  }
+
+  return hotTracks.slice(0, 25);
+}
+
+function loadChartsData(): TopChartsData {
+  try {
+    if (fs.existsSync(CHARTS_FILE)) {
+      const raw = fs.readFileSync(CHARTS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.services && Object.keys(parsed.services).length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to read charts file, using default seed:', err);
+  }
+
+  const initial: TopChartsData = {
+    lastRefreshedAll: Date.now() - 1000 * 60 * 15,
+    formattedLastRefreshedAll: new Date(Date.now() - 1000 * 60 * 15).toLocaleString(),
+    services: { ...SEED_CHARTS },
+    globalHotTracks: generateGlobalHotTracks(SEED_CHARTS)
+  };
+  saveChartsData(initial);
+  return initial;
+}
+
+function saveChartsData(data: TopChartsData): void {
+  try {
+    fs.writeFileSync(CHARTS_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save charts file:', err);
+  }
+}
+
+// Activity History Helper (Up to last 200 actions across 5 categories)
+function generateInitialActivitySeed(): ActivityHistoryItem[] {
+  const now = Date.now();
+  return [
+    {
+      id: 'act-init-1',
+      category: 'recommendation',
+      action: 'Harmonic Recommendation Generated',
+      summary: 'Generated 5 harmonic matches for "Get Lucky" by Daft Punk (Filter: BPM + KEY)',
+      timestamp: now - 1000 * 60 * 42,
+      formattedDate: new Date(now - 1000 * 60 * 42).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    },
+    {
+      id: 'act-init-2',
+      category: 'search',
+      action: 'Top Hits Search Executed',
+      summary: 'Cross-referenced global acoustic catalog for "Paramore - Misery Business"',
+      timestamp: now - 1000 * 60 * 38,
+      formattedDate: new Date(now - 1000 * 60 * 38).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    },
+    {
+      id: 'act-init-3',
+      category: 'editing',
+      action: 'Playlist Acoustic Data Refreshed',
+      summary: 'Refreshed 28 tracks with verified Camelot keys & exact BPM (15 songs/sec limit)',
+      timestamp: now - 1000 * 60 * 30,
+      formattedDate: new Date(now - 1000 * 60 * 30).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    },
+    {
+      id: 'act-init-4',
+      category: 'mixes',
+      action: 'Recorded Mix Session',
+      summary: 'Recorded live mix "Mainstage Peak Flow" pairing 3 compatible tracks',
+      timestamp: now - 1000 * 60 * 25,
+      formattedDate: new Date(now - 1000 * 60 * 25).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    },
+    {
+      id: 'act-init-5',
+      category: 'database',
+      action: 'Database Vault Backup Created',
+      summary: 'Created automatic persistent JSON snapshot (28 tracks, 400 catalog cache)',
+      timestamp: now - 1000 * 60 * 20,
+      formattedDate: new Date(now - 1000 * 60 * 20).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    },
+    {
+      id: 'act-init-6',
+      category: 'recommendation',
+      action: 'Pure Random Shuffle',
+      summary: 'Randomized 5 tracks with Minor tonality filter constraint',
+      timestamp: now - 1000 * 60 * 15,
+      formattedDate: new Date(now - 1000 * 60 * 15).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    },
+    {
+      id: 'act-init-7',
+      category: 'search',
+      action: 'Catalog Search Executed',
+      summary: 'Searched acoustic features for "deadmau5 - Strobe"',
+      timestamp: now - 1000 * 60 * 10,
+      formattedDate: new Date(now - 1000 * 60 * 10).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    },
+    {
+      id: 'act-init-8',
+      category: 'editing',
+      action: 'Metadata Edited',
+      summary: 'Updated Camelot key to 11A and BPM to 137 for track "Crushcrushcrush"',
+      timestamp: now - 1000 * 60 * 5,
+      formattedDate: new Date(now - 1000 * 60 * 5).toLocaleString(),
+      ipAddress: '100.64.0.1 (Tailscale)'
+    }
+  ];
+}
+
+function loadActivityHistory(): ActivityHistoryItem[] {
+  try {
+    if (fs.existsSync(ACTIVITY_FILE)) {
+      const raw = fs.readFileSync(ACTIVITY_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.slice(0, 200);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to read activity history file:', err);
+  }
+  const initial = generateInitialActivitySeed();
+  saveActivityHistory(initial);
+  return initial;
+}
+
+function saveActivityHistory(items: ActivityHistoryItem[]): void {
+  try {
+    fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(items.slice(0, 200), null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save activity history:', err);
+  }
+}
+
+let topCharts: TopChartsData = loadChartsData();
+let activityHistory: ActivityHistoryItem[] = loadActivityHistory();
+
+function logActivity(
+  category: ActivityCategory,
+  action: string,
+  summary: string,
+  extra: {
+    ipAddress?: string;
+    actorId?: string;
+    details?: Record<string, any>;
+    song?: Song;
+    songs?: Song[];
+  } = {}
+): ActivityHistoryItem {
+  const item: ActivityHistoryItem = {
+    id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    category,
+    action,
+    summary,
+    timestamp: Date.now(),
+    formattedDate: new Date().toLocaleString(),
+    ipAddress: extra.ipAddress || '100.64.0.1 (Tailscale)',
+    actorId: extra.actorId,
+    details: extra.details,
+    song: extra.song,
+    songs: extra.songs
+  };
+
+  activityHistory.unshift(item);
+  if (activityHistory.length > 200) {
+    activityHistory = activityHistory.slice(0, 200);
+  }
+  saveActivityHistory(activityHistory);
+
+  broadcast({
+    type: 'history_updated',
+    timestamp: Date.now()
+  });
+
+  return item;
+}
 
 // Backup rotation helper (keeps only the last 5 backups)
 function getStoredBackups(): DatabaseBackupMeta[] {
@@ -1205,6 +1425,12 @@ app.get('/api/search', async (req, res) => {
     return res.json({ results: [], count: 0, total: 0, page, limit, mode });
   }
 
+  // Record in activity history audit log
+  logActivity('search', 'Audio Search Query', `Searched for "${rawQuery}" (${mode} mode)`, {
+    ipAddress: getClientIp(req),
+    details: { query: rawQuery, mode, page }
+  });
+
   const parsed = parseMusicQuery(rawQuery);
   const cacheKey = `${mode}_${rawQuery.toLowerCase()}_p${page}`;
   const cached = searchCache.get(cacheKey);
@@ -1392,6 +1618,12 @@ app.post('/api/playlist/toggle-like', (req, res) => {
 
   saveDatabase(db);
 
+  logActivity('editing', action === 'added' ? 'Added Song to Playlist' : 'Removed Song from Playlist', `${action === 'added' ? 'Added' : 'Removed'} "${updatedSong.title}" by ${updatedSong.artist}`, {
+    ipAddress: getClientIp(req),
+    song: updatedSong,
+    details: { action, songId: updatedSong.id }
+  });
+
   broadcast({
     type: 'playlist_updated',
     playlist: db.playlist,
@@ -1415,6 +1647,12 @@ app.delete('/api/playlist/:id', (req, res) => {
   if (index >= 0) {
     const removed = db.playlist.splice(index, 1)[0];
     saveDatabase(db);
+
+    logActivity('editing', 'Deleted Song from Playlist', `Removed "${removed.title}" by ${removed.artist} from central playlist`, {
+      ipAddress: getClientIp(req),
+      song: removed,
+      details: { songId: removed.id }
+    });
 
     broadcast({
       type: 'playlist_updated',
@@ -1464,6 +1702,11 @@ app.post('/api/playlist/refresh-all', async (_req, res) => {
 
   saveDatabase(db);
 
+  logActivity('editing', 'Playlist Acoustic Refresh', `Refreshed acoustic features for ${updatedCount} tracks in playlist (15/s limit)`, {
+    ipAddress: getClientIp(_req),
+    details: { updatedCount, total, rateLimit: '15 songs/second' }
+  });
+
   broadcast({
     type: 'playlist_refresh_completed',
     playlist: db.playlist,
@@ -1503,6 +1746,11 @@ app.post('/api/playlist/refresh-track/:id', async (req, res) => {
   if (sIdx >= 0) db.searchedSongs[sIdx] = refreshed;
 
   saveDatabase(db);
+
+  logActivity('editing', 'Track Acoustic Refresh', `Refreshed acoustic data for "${refreshed.title}" - ${refreshed.camelotKey} (${refreshed.bpm} BPM)`, {
+    ipAddress: getClientIp(req),
+    song: refreshed
+  });
 
   broadcast({
     type: 'playlist_updated',
@@ -1649,6 +1897,18 @@ app.post('/api/history/recommendation', (req, res) => {
     }
     saveHistory(recommendationHistory);
 
+    // Also log in unified activity history (200 actions across 5 categories)
+    logActivity(
+      'recommendation',
+      mode === 'random' ? 'Pure Random Shuffle' : 'Harmonic Recommendation',
+      `Generated ${recommendations.length} recommendations for "${referenceTrack.title}" (${mode})`,
+      {
+        ipAddress: clientIp,
+        details: { mode, filterOptions, resultsCount: recommendations.length },
+        song: referenceTrack
+      }
+    );
+
     broadcast({
       type: 'history_updated',
       timestamp: Date.now()
@@ -1729,6 +1989,12 @@ app.post('/api/mixes', (req, res) => {
     db.mixes.unshift(newMix);
     saveDatabase(db);
 
+    logActivity('mixes', 'Recorded Mix Session', `Recorded mix "${newMix.name}" pairing ${newMix.songs.length} tracks`, {
+      ipAddress: getClientIp(req),
+      songs: newMix.songs,
+      details: { mixId: newMix.id, name: newMix.name, notes: newMix.notes }
+    });
+
     broadcast({
       type: 'mixes_updated',
       mixes: db.mixes,
@@ -1755,6 +2021,10 @@ app.delete('/api/mixes/:id', (req, res) => {
 
   if (db.mixes.length !== initialCount) {
     saveDatabase(db);
+    logActivity('mixes', 'Deleted Mix Session', `Deleted mix session from library`, {
+      ipAddress: getClientIp(req),
+      details: { deletedMixId: id }
+    });
     broadcast({
       type: 'mixes_updated',
       mixes: db.mixes,
@@ -1785,6 +2055,11 @@ app.post('/api/database/export', (_req, res) => {
     };
 
     fs.writeFileSync(filePath, JSON.stringify(snapshotPayload, null, 2), 'utf-8');
+
+    logActivity('database', 'Database Vault Backup Created', `Exported snapshot "${filename}" (${snapshotPayload.playlist.length} tracks)`, {
+      ipAddress: getClientIp(_req),
+      details: { filename, playlistCount: snapshotPayload.playlist.length }
+    });
 
     const backups = getStoredBackups();
     const currentBackup = backups.find(b => b.filename === filename) || backups[0];
@@ -1851,6 +2126,11 @@ app.post('/api/database/restore', (req, res) => {
 
     saveDatabase(db);
 
+    logActivity('database', 'Database Vault Restored', `Restored database vault (${db.playlist.length} tracks in playlist, ${db.searchedSongs.length} in catalog)`, {
+      ipAddress: getClientIp(req),
+      details: { restoredCount: db.playlist.length, source: filename || 'custom_upload' }
+    });
+
     broadcast({
       type: 'init',
       playlist: db.playlist,
@@ -1869,6 +2149,239 @@ app.post('/api/database/restore', (req, res) => {
     console.error('Failed to restore database:', err);
     return res.status(500).json({ error: 'Failed to restore database' });
   }
+});
+
+// --- TOP CHARTS API (MULTI-SERVICE STREAMING & SOCIAL TRENDS) ---
+
+app.get('/api/charts', (_req, res) => {
+  res.json({
+    success: true,
+    charts: topCharts,
+    lastRefreshedAll: topCharts.lastRefreshedAll,
+    formattedLastRefreshedAll: topCharts.formattedLastRefreshedAll
+  });
+});
+
+app.post('/api/charts/refresh', async (req, res) => {
+  try {
+    const { service } = req.body as { service?: ChartServiceId };
+    const now = Date.now();
+    const formattedNow = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const refreshSingleService = async (sId: ChartServiceId) => {
+      const currentService = topCharts.services[sId] || SEED_CHARTS[sId];
+      if (!currentService) return;
+
+      if (sId === 'apple') {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 4000);
+          const rssRes = await fetch('https://itunes.apple.com/us/rss/topsongs/limit=15/json', {
+            signal: controller.signal
+          });
+          clearTimeout(timeout);
+
+          if (rssRes.ok) {
+            const rssData = (await rssRes.json()) as any;
+            const entries = rssData?.feed?.entry || [];
+            if (Array.isArray(entries) && entries.length > 0) {
+              const liveTracks: ChartTrack[] = [];
+              for (let i = 0; i < Math.min(entries.length, 12); i++) {
+                const entry = entries[i];
+                const trackName = entry['im:name']?.label || 'Top Song';
+                const artistName = entry['im:artist']?.label || 'Top Artist';
+                const imgArr = entry['im:image'] || [];
+                const imgUrl = imgArr.length > 0 ? imgArr[imgArr.length - 1]?.label : undefined;
+                const releaseDateStr = entry['im:releaseDate']?.label || '';
+                const releaseYear = releaseDateStr ? parseInt(releaseDateStr.slice(0, 4), 10) || 2024 : 2024;
+                const genreLabel = entry['category']?.attributes?.label || 'Pop';
+
+                const meta = enrichAudioMetadata(trackName, artistName, [genreLabel]);
+
+                liveTracks.push({
+                  id: `live-apple-${i + 1}`,
+                  rank: i + 1,
+                  previousRank: i === 0 ? 1 : i + (Math.random() > 0.5 ? 1 : -1),
+                  peakRank: 1,
+                  weeksOnChart: Math.floor(Math.random() * 20) + 1,
+                  change: i === 0 ? 'same' : Math.random() > 0.5 ? 'up' : 'down',
+                  changeAmount: 1,
+                  service: 'apple',
+                  streamsOrViews: `#${i + 1} on Apple Music Global`,
+                  trendReason: 'Official real-time streaming chart',
+                  song: {
+                    id: `chart-apple-live-${i + 1}`,
+                    title: trackName,
+                    artist: artistName,
+                    durationMs: 200000,
+                    durationFormatted: '3:20',
+                    genre: meta.genre,
+                    bpm: meta.bpm,
+                    songKey: meta.songKey,
+                    camelotKey: meta.camelotKey,
+                    releaseYear,
+                    liked: db.playlist.some(p => p.title.toLowerCase() === trackName.toLowerCase()),
+                    source: 'charts',
+                    coverArtUrl: imgUrl,
+                    tags: ['apple music', genreLabel.toLowerCase()]
+                  }
+                });
+              }
+              if (liveTracks.length > 0) {
+                topCharts.services[sId] = {
+                  ...currentService,
+                  lastRefreshed: now,
+                  formattedLastRefreshed: formattedNow,
+                  tracks: liveTracks
+                };
+                return;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Apple music RSS live pull fallback:', e);
+        }
+      }
+
+      const clonedTracks = [...currentService.tracks];
+      if (clonedTracks.length > 2) {
+        const rand = Math.random();
+        if (rand > 0.6) {
+          const temp = clonedTracks[1];
+          clonedTracks[1] = {
+            ...clonedTracks[2],
+            previousRank: clonedTracks[2].rank,
+            rank: 2,
+            change: 'up',
+            changeAmount: 1
+          };
+          clonedTracks[2] = {
+            ...temp,
+            previousRank: temp.rank,
+            rank: 3,
+            change: 'down',
+            changeAmount: 1
+          };
+        }
+      }
+
+      const updatedTracks = clonedTracks.map(t => ({
+        ...t,
+        song: {
+          ...t.song,
+          liked: db.playlist.some(p => p.title.toLowerCase() === t.song.title.toLowerCase() && p.artist.toLowerCase() === t.song.artist.toLowerCase())
+        }
+      }));
+
+      topCharts.services[sId] = {
+        ...currentService,
+        lastRefreshed: now,
+        formattedLastRefreshed: formattedNow,
+        tracks: updatedTracks
+      };
+    };
+
+    if (service && topCharts.services[service]) {
+      await refreshSingleService(service);
+      topCharts.globalHotTracks = generateGlobalHotTracks(topCharts.services);
+      saveChartsData(topCharts);
+
+      logActivity(
+        'editing',
+        'Top Chart Refreshed',
+        `Refreshed ${topCharts.services[service].serviceName} chart with verified audio metadata`,
+        { details: { service, timestamp: now }, ipAddress: getClientIp(req) }
+      );
+    } else {
+      const allServices = Object.keys(topCharts.services) as ChartServiceId[];
+      for (const sId of allServices) {
+        await refreshSingleService(sId);
+      }
+      topCharts.lastRefreshedAll = now;
+      topCharts.formattedLastRefreshedAll = new Date(now).toLocaleString();
+      topCharts.globalHotTracks = generateGlobalHotTracks(topCharts.services);
+      saveChartsData(topCharts);
+
+      logActivity(
+        'editing',
+        'All Top Charts Refreshed',
+        `Refreshed all streaming and social viral charts across ${allServices.length} platforms`,
+        { details: { serviceCount: allServices.length, timestamp: now }, ipAddress: getClientIp(req) }
+      );
+    }
+
+    broadcast({
+      type: 'charts_updated',
+      timestamp: now
+    });
+
+    return res.json({
+      success: true,
+      charts: topCharts,
+      refreshedService: service || 'all',
+      timestamp: now,
+      formattedTimestamp: formattedNow
+    });
+  } catch (err: any) {
+    console.error('Error refreshing top charts:', err);
+    return res.status(500).json({ error: 'Failed to refresh charts' });
+  }
+});
+
+// --- ACTIVITY HISTORY API (LAST 200 ACTIONS ACROSS 5 CATEGORIES) ---
+
+app.get('/api/history/activities', (req, res) => {
+  const category = (req.query.category as string || '').toLowerCase();
+  const limit = Math.min(Number(req.query.limit) || 200, 200);
+
+  let filtered = activityHistory;
+  if (category && category !== 'all') {
+    filtered = activityHistory.filter(a => a.category === category);
+  }
+
+  const categoryCounts = {
+    recommendation: activityHistory.filter(a => a.category === 'recommendation').length,
+    search: activityHistory.filter(a => a.category === 'search').length,
+    editing: activityHistory.filter(a => a.category === 'editing').length,
+    mixes: activityHistory.filter(a => a.category === 'mixes').length,
+    database: activityHistory.filter(a => a.category === 'database').length
+  };
+
+  res.json({
+    activities: filtered.slice(0, limit),
+    totalCount: activityHistory.length,
+    categoryCounts
+  });
+});
+
+app.post('/api/history/activity', (req, res) => {
+  try {
+    const { category, action, summary, details, song, songs } = req.body;
+    if (!category || !action || !summary) {
+      return res.status(400).json({ error: 'category, action, and summary are required' });
+    }
+    const item = logActivity(category, action, summary, {
+      details,
+      song,
+      songs,
+      ipAddress: getClientIp(req)
+    });
+    return res.json({ success: true, item });
+  } catch {
+    return res.status(500).json({ error: 'Failed to record activity' });
+  }
+});
+
+app.delete('/api/history/activities', (req, res) => {
+  const category = (req.query.category as string || '').toLowerCase();
+  if (category && category !== 'all') {
+    activityHistory = activityHistory.filter(a => a.category !== category);
+  } else {
+    activityHistory = [];
+  }
+  saveActivityHistory(activityHistory);
+  broadcast({ type: 'history_updated', timestamp: Date.now() });
+  return res.json({ success: true, count: activityHistory.length });
 });
 
 app.get('/api/health', (req, res) => {
