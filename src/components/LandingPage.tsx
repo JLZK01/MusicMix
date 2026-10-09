@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Disc3, ArrowRight, Radio, Activity, Music2, Sparkles, Layers, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState } from 'react';
+import { Disc3, ArrowRight, Radio, Activity, Music2, Sparkles, Layers, ChevronDown } from 'lucide-react';
 import { Song } from '../types/music';
 
 interface LandingPageProps {
@@ -16,13 +16,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   playlist
 }) => {
   const [isFading, setIsFading] = useState(false);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isSliding, setIsSliding] = useState(false);
-  const [slideDir, setSlideDir] = useState<'next' | 'prev'>('next');
 
   // Filter playlist tracks that have valid cover art
   const songsWithCover = playlist.filter(s => Boolean(s.coverArtUrl));
   const count = songsWithCover.length;
+
+  // Create infinite repeating track for nonstop continuous smooth marquee
+  const extendedSongs = [...songsWithCover, ...songsWithCover, ...songsWithCover];
 
   const handleEnterClick = () => {
     setIsFading(true);
@@ -37,50 +37,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       afkElem.scrollIntoView({ behavior: 'smooth' });
     }
   };
-
-  // Smooth automatic 2-second right-to-left scroll
-  useEffect(() => {
-    if (count <= 1) return;
-
-    const interval = setInterval(() => {
-      setSlideDir('next');
-      setIsSliding(true);
-
-      setTimeout(() => {
-        setCurrentIndex(prev => (prev + 1) % count);
-        setIsSliding(false);
-      }, 700);
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [count]);
-
-  const handlePrev = () => {
-    if (count <= 1 || isSliding) return;
-    setSlideDir('prev');
-    setIsSliding(true);
-    setTimeout(() => {
-      setCurrentIndex(prev => (prev - 1 + count) % count);
-      setIsSliding(false);
-    }, 700);
-  };
-
-  const handleNext = () => {
-    if (count <= 1 || isSliding) return;
-    setSlideDir('next');
-    setIsSliding(true);
-    setTimeout(() => {
-      setCurrentIndex(prev => (prev + 1) % count);
-      setIsSliding(false);
-    }, 700);
-  };
-
-  // Active indices: Prev, Current, Next, and NextNext for smooth right-to-left sliding
-  const prevIdx = count > 0 ? (currentIndex - 1 + count) % count : 0;
-  const currIdx = count > 0 ? currentIndex % count : 0;
-  const nextIdx = count > 0 ? (currentIndex + 1) % count : 0;
-  const nextNextIdx = count > 0 ? (currentIndex + 2) % count : 0;
-  const prevPrevIdx = count > 0 ? (currentIndex - 2 + count) % count : 0;
 
   return (
     <div
@@ -219,7 +175,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </div>
 
       {/* ==================================================================== */}
-      {/* SECTION 2: SMOOTH HORIZONTAL SCROLLING SPLASHSCREEN */}
+      {/* SECTION 2: NONSTOP CONTINUOUS SMOOTH MARQUEE SPLASHSCREEN */}
       {/* ==================================================================== */}
       <section
         id="afk-splashscreen"
@@ -230,7 +186,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="flex items-center gap-2.5">
             <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
             <span className="text-white font-bold tracking-wider uppercase text-sm">
-              MusicMix Visualizer Lounge
+              MusicMix Visualizer Lounge (Continuous AFK Splashscreen)
             </span>
           </div>
 
@@ -243,151 +199,72 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </button>
         </div>
 
-        {/* Smooth Sliding Carousel Track */}
-        <div className="my-auto w-full max-w-7xl mx-auto py-6 overflow-hidden relative">
+        {/* Continuous Smooth Marquee Track */}
+        <div className="my-auto w-full py-10 overflow-hidden relative">
           {count === 0 ? (
             <div className="text-center py-24 text-zinc-600 font-mono text-sm">
               No playlist songs with album art yet.
             </div>
           ) : (
-            <div className="relative w-full flex justify-center overflow-hidden py-4">
-              {/* Sliding Track: Smooth continuous glide right-to-left */}
-              <div
-                className={`flex items-start ${
-                  isSliding
-                    ? 'transition-transform duration-700 ease-[cubic-bezier(0.25,1,0.5,1)]'
-                    : 'transition-none'
-                }`}
-                style={{
-                  transform: isSliding
-                    ? slideDir === 'next'
-                      ? 'translateX(-480px)'
-                      : 'translateX(480px)'
-                    : 'translateX(0px)',
-                  willChange: 'transform'
-                }}
-              >
-                {/* 5-slot sliding window: PrevPrev, Prev, Current (Center), Next, NextNext */}
-                {[
-                  { song: songsWithCover[prevPrevIdx], role: 'prevPrev' },
-                  { song: songsWithCover[prevIdx], role: 'prev' },
-                  { song: songsWithCover[currIdx], role: 'current' },
-                  { song: songsWithCover[nextIdx], role: 'next' },
-                  { song: songsWithCover[nextNextIdx], role: 'nextNext' }
-                ].map(({ song, role }, slotIdx) => {
-                  const isCurrent = role === 'current';
-                  const isPrev = role === 'prev';
-                  const isNext = role === 'next';
-                  const isVisible = isCurrent || isPrev || isNext;
-
-                  return (
-                    <div
-                      key={`${song.id}-${slotIdx}`}
-                      onClick={() => {
-                        if (isPrev) handlePrev();
-                        if (isNext) handleNext();
-                      }}
-                      className={`shrink-0 w-[480px] px-4 flex flex-col items-center justify-start text-center transition-opacity duration-700 ${
-                        isCurrent
-                          ? 'opacity-100 z-20'
-                          : isVisible
-                          ? 'opacity-40 blur-[0.5px] cursor-pointer z-10'
-                          : 'opacity-0 pointer-events-none'
-                      }`}
-                    >
-                      {/* Fixed Dimension Album Art Container (Stationary vertical top baseline) */}
-                      <div className="relative group shrink-0">
-                        <div
-                          className={`w-72 h-72 sm:w-88 sm:h-88 md:w-[400px] md:h-[400px] rounded-3xl overflow-hidden border-2 transition-all duration-700 bg-zinc-950 relative ${
-                            isCurrent
-                              ? 'border-cyan-500/60 shadow-[0_0_90px_rgba(6,182,212,0.3)] scale-100'
-                              : 'border-zinc-800 scale-90'
-                          }`}
-                        >
-                          <img
-                            src={song.coverArtUrl}
-                            alt={song.title}
-                            className="w-full h-full object-cover select-none"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-70" />
-                        </div>
-
-                        {isCurrent && (
-                          <div className="absolute -top-3 -right-3 px-3 py-1 rounded-full bg-cyan-500 text-zinc-950 font-bold text-[11px] font-mono shadow-lg shadow-cyan-500/40 uppercase tracking-wider">
-                            NOW PLAYING
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Song Title: STRICT FIXED HEIGHT (56px / h-14) with flex vertical centering & line-clamp-2 */}
-                      {/* This guarantees the album art NEVER jumps vertically whether title is 1 line or 2 lines! */}
-                      <div className="h-14 w-full max-w-sm flex items-center justify-center text-center mt-4 px-2">
-                        <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight leading-tight line-clamp-2 drop-shadow">
-                          {song.title}
-                        </h2>
-                      </div>
-
-                      {/* Artist: STRICT FIXED HEIGHT (24px / h-6) */}
-                      <div className="h-6 w-full max-w-sm flex items-center justify-center text-center mt-1 px-2">
-                        <p className="text-sm sm:text-base font-medium text-cyan-300/90 truncate max-w-full">
-                          {song.artist}
-                        </p>
-                      </div>
-
-                      {/* Audio Metadata Specs: STRICT FIXED HEIGHT (32px / h-8) */}
-                      <div className="h-8 flex items-center justify-center gap-2 text-xs font-mono text-zinc-400 mt-2">
-                        <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800">
-                          {song.genre}
-                        </span>
-                        <span>•</span>
-                        <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-cyan-300 font-bold">
-                          {song.bpm} BPM
-                        </span>
-                        <span>•</span>
-                        <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-violet-300 font-bold">
-                          {song.camelotKey}
-                        </span>
+            <div className="w-full overflow-hidden relative py-4">
+              {/* Continuous Marquee Track (Preloads all cover images off-screen and glides smoothly nonstop) */}
+              <div className="animate-marquee flex gap-8 items-start">
+                {extendedSongs.map((song, idx) => (
+                  <div
+                    key={`${song.id}-${idx}`}
+                    className="shrink-0 w-[420px] px-4 flex flex-col items-center justify-start text-center"
+                  >
+                    {/* Album Art Container (Preloaded in DOM) */}
+                    <div className="relative shrink-0">
+                      <div className="w-72 h-72 sm:w-80 sm:h-80 md:w-96 md:h-96 rounded-3xl overflow-hidden border-2 border-zinc-800 bg-zinc-950 shadow-2xl relative">
+                        <img
+                          src={song.coverArtUrl}
+                          alt={song.title}
+                          loading="eager"
+                          className="w-full h-full object-cover select-none"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-70" />
                       </div>
                     </div>
-                  );
-                })}
+
+                    {/* Song Title */}
+                    <div className="h-14 w-full max-w-sm flex items-center justify-center text-center mt-4 px-2">
+                      <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight leading-tight line-clamp-2 drop-shadow">
+                        {song.title}
+                      </h2>
+                    </div>
+
+                    {/* Artist */}
+                    <div className="h-6 w-full max-w-sm flex items-center justify-center text-center mt-1 px-2">
+                      <p className="text-sm sm:text-base font-medium text-cyan-300/90 truncate max-w-full">
+                        {song.artist}
+                      </p>
+                    </div>
+
+                    {/* Audio Metadata Specs */}
+                    <div className="h-8 flex items-center justify-center gap-2 text-xs font-mono text-zinc-400 mt-2">
+                      <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800">
+                        {song.genre}
+                      </span>
+                      <span>•</span>
+                      <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-cyan-300 font-bold">
+                        {song.bpm} BPM
+                      </span>
+                      <span>•</span>
+                      <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-violet-300 font-bold">
+                        {song.camelotKey}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-          )}
-
-          {/* Carousel Manual Controls */}
-          {count > 1 && (
-            <div className="flex items-center justify-center gap-4 mt-6">
-              <button
-                onClick={handlePrev}
-                disabled={isSliding}
-                className="p-2.5 rounded-full bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-white border border-zinc-800 transition cursor-pointer"
-                title="Previous track"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-
-              <div className="flex items-center gap-1.5 font-mono text-xs text-zinc-500">
-                <span className="text-cyan-400 font-bold">{currentIndex + 1}</span>
-                <span>/</span>
-                <span>{count}</span>
-              </div>
-
-              <button
-                onClick={handleNext}
-                disabled={isSliding}
-                className="p-2.5 rounded-full bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 text-zinc-400 hover:text-white border border-zinc-800 transition cursor-pointer"
-                title="Next track"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
             </div>
           )}
         </div>
 
         {/* Bottom bar */}
         <div className="max-w-7xl mx-auto w-full flex items-center justify-between text-xs text-zinc-600 font-mono">
-          <span>Visual Splashscreen</span>
+          <span>Continuous Smooth Marquee Splashscreen</span>
           <span>Scroll up or click Enter to return to workstation</span>
         </div>
       </section>

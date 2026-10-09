@@ -570,7 +570,13 @@ export const TopChartsPage: React.FC<TopChartsPageProps> = ({
                     {currentSubService.serviceName}
                   </h2>
                 </div>
-                <p className="text-xs sm:text-sm text-zinc-300">{currentSubService.tagline}</p>
+                {currentSubService.dataSource && (
+                  <div className="text-xs font-mono text-cyan-300 bg-cyan-950/40 px-2.5 py-1 rounded-lg border border-cyan-500/30 inline-flex items-center gap-1.5 mt-1">
+                    <span className="text-zinc-400 font-semibold">Source location:</span>
+                    <span>{currentSubService.dataSource}</span>
+                  </div>
+                )}
+                <p className="text-xs sm:text-sm text-zinc-300 pt-0.5">{currentSubService.tagline}</p>
                 <div className="flex items-center gap-3 pt-1 text-xs text-zinc-400 font-mono">
                   <span className="flex items-center gap-1">
                     <Clock className="w-3.5 h-3.5 text-zinc-400" />

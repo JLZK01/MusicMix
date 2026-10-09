@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+@keyframes continuousMarquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-33.333%);
+  }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: continuousMarquee 70s linear infinite;
+}

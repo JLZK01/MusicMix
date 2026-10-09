@@ -102,6 +102,7 @@ export interface ServiceChart {
   serviceId: ChartServiceId;
   serviceName: string;
   tagline: string;
+  dataSource?: string;
   accentColor: string;
   badgeBg: string;
   lastRefreshed: number;

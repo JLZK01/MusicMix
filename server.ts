@@ -153,14 +153,14 @@ function saveDatabase(data: DatabaseSchema): void {
   }
 }
 
-// History helper (last 100 sets of recommendations)
+// History helper (last 500 sets of recommendations)
 function loadHistory(): RecommendationHistoryEntry[] {
   try {
     if (fs.existsSync(HISTORY_FILE)) {
       const raw = fs.readFileSync(HISTORY_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed.slice(0, 100);
+        return parsed.slice(0, 500);
       }
     }
   } catch (err) {
@@ -171,7 +171,7 @@ function loadHistory(): RecommendationHistoryEntry[] {
 
 function saveHistory(history: RecommendationHistoryEntry[]): void {
   try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history.slice(0, 100), null, 2), 'utf-8');
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history.slice(0, 500), null, 2), 'utf-8');
   } catch (err) {
     console.error('Failed to save history file:', err);
   }
@@ -211,7 +211,10 @@ function loadChartsData(): TopChartsData {
       const raw = fs.readFileSync(CHARTS_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
       if (parsed && parsed.services && Object.keys(parsed.services).length > 0) {
-        return parsed;
+        const firstKey = Object.keys(parsed.services)[0] as ChartServiceId;
+        if (parsed.services[firstKey]?.tracks?.length >= 15) {
+          return parsed;
+        }
       }
     }
   } catch (err) {
@@ -321,7 +324,7 @@ function loadActivityHistory(): ActivityHistoryItem[] {
       const raw = fs.readFileSync(ACTIVITY_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.slice(0, 200);
+        return parsed.slice(0, 500);
       }
     }
   } catch (err) {
@@ -334,7 +337,7 @@ function loadActivityHistory(): ActivityHistoryItem[] {
 
 function saveActivityHistory(items: ActivityHistoryItem[]): void {
   try {
-    fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(items.slice(0, 200), null, 2), 'utf-8');
+    fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(items.slice(0, 500), null, 2), 'utf-8');
   } catch (err) {
     console.error('Failed to save activity history:', err);
   }
@@ -370,8 +373,8 @@ function logActivity(
   };
 
   activityHistory.unshift(item);
-  if (activityHistory.length > 200) {
-    activityHistory = activityHistory.slice(0, 200);
+  if (activityHistory.length > 500) {
+    activityHistory = activityHistory.slice(0, 500);
   }
   saveActivityHistory(activityHistory);
 

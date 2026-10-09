@@ -166,12 +166,6 @@ export const SearchPage: React.FC<SearchPageProps> = ({
     }
   };
 
-  useEffect(() => {
-    if (searchResults.length === 0 && searchQuery === '') {
-      handleSearch('Daft Punk', 1);
-    }
-  }, []);
-
   const isSongInPlaylist = (song: Song): boolean => {
     return playlist.some(
       p => p.id === song.id || (p.reccoTrackId && p.reccoTrackId === song.reccoTrackId) ||
