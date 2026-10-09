@@ -17,10 +17,10 @@ import {
   ChartServiceId,
   ActivityCategory,
   ActivityHistoryItem
-} from './src/types/music.ts';
-import { INITIAL_SEED_SONGS } from './src/data/seedSongs.ts';
-import { SEED_CHARTS } from './src/data/chartsData.ts';
-import { normalizeToCamelot } from './src/utils/harmonic.ts';
+} from './src/types/music';
+import { INITIAL_SEED_SONGS } from './src/data/seedSongs';
+import { SEED_CHARTS } from './src/data/chartsData';
+import { normalizeToCamelot } from './src/utils/harmonic';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
