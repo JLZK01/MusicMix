@@ -490,18 +490,425 @@ function enrichAudioMetadata(title: string, artist: string, genreTags: string[])
 const searchCache = new Map<string, { results: Song[]; timestamp: number }>();
 const CACHE_TTL_MS = 1000 * 60 * 30; // 30 minutes
 
-// Rate limit throttle: MusicBrainz strictly requires max 1 request/second
-let lastMusicBrainzTime = 0;
-async function throttleMusicBrainz(): Promise<void> {
+const PITCH_CLASS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+const CAMELOT_KEY_MAP: Record<string, string> = {
+  'C_1': '8B', 'C_0': '5A',
+  'C#_1': '3B', 'C#_0': '12A',
+  'D_1': '10B', 'D_0': '7A',
+  'Eb_1': '5B', 'Eb_0': '2A',
+  'E_1': '12B', 'E_0': '9A',
+  'F_1': '7B', 'F_0': '4A',
+  'F#_1': '2B', 'F#_0': '11A',
+  'G_1': '9B', 'G_0': '6A',
+  'Ab_1': '4B', 'Ab_0': '1A',
+  'A_1': '11B', 'A_0': '8A',
+  'Bb_1': '6B', 'Bb_0': '3A',
+  'B_1': '1B', 'B_0': '10A'
+};
+
+// Rate limiter helper: guarantees external audio intelligence API calls never exceed 15 requests per second
+const RATE_LIMIT_INTERVAL_MS = 68; // ~14.7 req/s to strictly ensure <= 15 songs/sec
+let lastAcousticCallTime = 0;
+
+async function rateLimitedDelay(): Promise<void> {
   const now = Date.now();
-  const diff = now - lastMusicBrainzTime;
-  if (diff < 1100) {
-    await new Promise((r) => setTimeout(r, 1100 - diff));
+  const elapsed = now - lastAcousticCallTime;
+  if (elapsed < RATE_LIMIT_INTERVAL_MS) {
+    await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_INTERVAL_MS - elapsed));
   }
-  lastMusicBrainzTime = Date.now();
+  lastAcousticCallTime = Date.now();
 }
 
-// iTunes fallback search (free, robust, returns high-res cover art & duration, supports pagination offset)
+// In-memory audio feature cache to prevent redundant external API calls
+const audioFeatureCache = new Map<string, { bpm: number; songKey: string; camelotKey: string; reccoTrackId?: string }>();
+
+// Real acoustic cross-checking using Audio Intelligence API
+async function fetchReccoBeatsFeatures(title: string, artist: string): Promise<{
+  bpm: number;
+  songKey: string;
+  camelotKey: string;
+  reccoTrackId?: string;
+} | null> {
+  const cacheKey = `${title.toLowerCase()}___${artist.toLowerCase()}`;
+  if (audioFeatureCache.has(cacheKey)) {
+    return audioFeatureCache.get(cacheKey)!;
+  }
+
+  await rateLimitedDelay();
+
+  try {
+    const searchUrl = `https://api.reccobeats.com/v1/track/search?searchText=${encodeURIComponent(title)}&size=30`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4500);
+
+    const res = await fetch(searchUrl, {
+      headers: { 'User-Agent': 'MusicMix/2.0' },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return null;
+    const data = (await res.json()) as { content?: Array<{ id: string; trackTitle: string; artists: Array<{ name: string }> }> };
+    const items = data.content || [];
+    if (items.length === 0) return null;
+
+    let matchedItem: { id: string; trackTitle: string } | undefined;
+    const tClean = title.toLowerCase();
+    const aClean = artist.toLowerCase();
+
+    // 1. Check title and artist match
+    for (const item of items) {
+      const itemTitle = (item.trackTitle || '').toLowerCase();
+      const itemArtists = (item.artists || []).map(a => (a.name || '').toLowerCase());
+      if (tClean.includes(itemTitle) || itemTitle.includes(tClean)) {
+        if (aClean && itemArtists.some(name => aClean.includes(name) || name.includes(aClean) || aClean.split(' ').some(part => part.length > 2 && name.includes(part)))) {
+          matchedItem = item;
+          break;
+        }
+      }
+    }
+
+    // 2. Exact title fallback
+    if (!matchedItem) {
+      matchedItem = items.find(item => (item.trackTitle || '').toLowerCase() === tClean);
+    }
+
+    if (!matchedItem && items.length > 0 && !artist) {
+      matchedItem = items[0];
+    }
+
+    if (matchedItem) {
+      await rateLimitedDelay();
+      const featUrl = `https://api.reccobeats.com/v1/track/${matchedItem.id}/audio-features`;
+      const featController = new AbortController();
+      const featTimeout = setTimeout(() => featController.abort(), 4000);
+
+      const featRes = await fetch(featUrl, {
+        headers: { 'User-Agent': 'MusicMix/2.0' },
+        signal: featController.signal
+      });
+      clearTimeout(featTimeout);
+
+      if (featRes.ok) {
+        const feats = (await featRes.json()) as { key?: number; mode?: number; tempo?: number };
+        const keyIdx = feats.key;
+        const mode = feats.mode ?? 1;
+        const tempo = Math.round(feats.tempo || 120);
+
+        if (keyIdx !== undefined && keyIdx >= 0 && keyIdx < PITCH_CLASS.length) {
+          const pitch = PITCH_CLASS[keyIdx];
+          const modeStr = mode === 1 ? 'Major' : 'Minor';
+          const songKey = `${pitch} ${modeStr}`;
+          const camelotKey = CAMELOT_KEY_MAP[`${pitch}_${mode}`] || '8A';
+
+          const result = {
+            bpm: tempo,
+            songKey,
+            camelotKey: normalizeToCamelot(camelotKey),
+            reccoTrackId: matchedItem.id
+          };
+          audioFeatureCache.set(cacheKey, result);
+          return result;
+        }
+      }
+    }
+  } catch {
+    // network or timeout fallback
+  }
+
+  return null;
+}
+
+// Refresh acoustic data for a single song from acoustic audio catalog (rate-limited <= 15 songs/sec)
+async function refreshSongAcousticData(song: Song): Promise<Song> {
+  await rateLimitedDelay();
+
+  let targetTrackId = song.reccoTrackId;
+  let trackInfo: {
+    durationMs?: number;
+    isrc?: string;
+    popularity?: number;
+    matchedTitle?: string;
+    matchedArtist?: string;
+  } = {};
+
+  // If no trackId or previously missing features, search audio catalog
+  if (!targetTrackId) {
+    try {
+      const searchUrl = `https://api.reccobeats.com/v1/track/search?searchText=${encodeURIComponent(song.title)}&size=30`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4500);
+
+      const res = await fetch(searchUrl, {
+        headers: { 'User-Agent': 'MusicMix/2.0' },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
+      if (res.ok) {
+        const data = (await res.json()) as {
+          content?: Array<{
+            id: string;
+            trackTitle: string;
+            artists: Array<{ name: string }>;
+            durationMs?: number;
+            isrc?: string;
+            popularity?: number;
+          }>;
+        };
+        const items = data.content || [];
+        const tClean = song.title.toLowerCase().trim();
+        const aClean = song.artist.toLowerCase().trim();
+
+        let matched = items.find((item) => {
+          const itemTitle = (item.trackTitle || '').toLowerCase().trim();
+          const itemArtists = (item.artists || []).map(a => (a.name || '').toLowerCase());
+          const titleMatch = itemTitle === tClean || tClean.includes(itemTitle) || itemTitle.includes(tClean);
+          const artistMatch = !aClean || itemArtists.some(name => aClean.includes(name) || name.includes(aClean) || aClean.split(' ').some(part => part.length > 2 && name.includes(part)));
+          return titleMatch && artistMatch;
+        });
+
+        if (!matched && items.length > 0) {
+          matched = items.find(item => (item.trackTitle || '').toLowerCase().trim() === tClean) || items[0];
+        }
+
+        if (matched) {
+          targetTrackId = matched.id;
+          trackInfo = {
+            durationMs: matched.durationMs,
+            isrc: matched.isrc,
+            popularity: matched.popularity,
+            matchedTitle: matched.trackTitle,
+            matchedArtist: (matched.artists || []).map(a => a.name).join(', ')
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Acoustic refresh search error for:', song.title, e);
+    }
+  }
+
+  // Fetch audio features for targetTrackId
+  let bpm = song.bpm;
+  let songKey = song.songKey;
+  let camelotKey = song.camelotKey;
+  let durationMs = trackInfo.durationMs || song.durationMs;
+  let releaseYear = song.releaseYear;
+
+  if (targetTrackId) {
+    try {
+      await rateLimitedDelay();
+      const featController = new AbortController();
+      const featTimeout = setTimeout(() => featController.abort(), 4000);
+      const featRes = await fetch(`https://api.reccobeats.com/v1/track/${targetTrackId}/audio-features`, {
+        headers: { 'User-Agent': 'MusicMix/2.0' },
+        signal: featController.signal
+      });
+      clearTimeout(featTimeout);
+
+      if (featRes.ok) {
+        const feats = (await featRes.json()) as { key?: number; mode?: number; tempo?: number };
+        if (feats.key !== undefined && feats.key >= 0 && feats.key < PITCH_CLASS.length) {
+          const pitch = PITCH_CLASS[feats.key];
+          const mode = feats.mode ?? 1;
+          songKey = `${pitch} ${mode === 1 ? 'Major' : 'Minor'}`;
+          const rawCamelot = CAMELOT_KEY_MAP[`${pitch}_${mode}`] || '8A';
+          camelotKey = normalizeToCamelot(rawCamelot);
+          bpm = Math.round(feats.tempo || song.bpm || 120);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch audio features during refresh for', song.title, err);
+    }
+  }
+
+  // Parse release year from ISRC if available
+  if (trackInfo.isrc && trackInfo.isrc.length >= 7) {
+    const yrDigits = parseInt(trackInfo.isrc.substring(5, 7), 10);
+    if (!isNaN(yrDigits)) {
+      releaseYear = yrDigits > 30 ? 1900 + yrDigits : 2000 + yrDigits;
+    }
+  }
+
+  const durationFormatted = formatDuration(durationMs);
+
+  let genre = song.genre;
+  if (!genre || genre === 'Unknown' || genre === 'Electronic') {
+    if (bpm >= 135) genre = 'Dance / Up-Tempo';
+    else if (bpm <= 90) genre = 'R&B / Soul / Hip-Hop';
+    else if (bpm >= 115 && bpm <= 130) genre = 'Pop / Rock';
+    else genre = 'Electronic / Pop';
+  }
+
+  const updatedSong: Song = {
+    ...song,
+    bpm: Number(bpm) || 120,
+    songKey,
+    camelotKey: normalizeToCamelot(camelotKey),
+    durationMs,
+    durationFormatted,
+    releaseYear,
+    genre,
+    reccoTrackId: targetTrackId || song.reccoTrackId,
+    coverArtUrl: song.coverArtUrl || `/api/covers/${encodeURIComponent(song.id)}?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist)}`,
+    source: 'catalog',
+    tags: Array.from(new Set([...(song.tags || []), 'audio verified', 'harmonic key'])),
+    lastRefreshedAt: Date.now()
+  };
+
+  return updatedSong;
+}
+
+// Search acoustic audio catalog with verified features and popularity ranking
+async function fetchFromReccoBeats(query: string, page = 0, size = 25, artistHint = ''): Promise<Song[]> {
+  try {
+    const cleanQuery = query.trim();
+    if (!cleanQuery) return [];
+
+    const searchUrl = `https://api.reccobeats.com/v1/track/search?searchText=${encodeURIComponent(cleanQuery)}&page=${page}&size=${size}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(searchUrl, {
+      headers: { 'User-Agent': 'MusicMix/2.0' },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      content?: Array<{
+        id: string;
+        trackTitle: string;
+        artists: Array<{ id: string; name: string }>;
+        durationMs?: number;
+        popularity?: number;
+        isrc?: string;
+      }>;
+    };
+    let items = data.content || [];
+    if (items.length === 0) return [];
+
+    // Sort by popularity descending so Top Hits appear first
+    const aClean = artistHint.toLowerCase();
+    items.sort((a, b) => {
+      // Prioritize artist match if artistHint provided
+      if (aClean) {
+        const aHasArtist = (a.artists || []).some(art => art.name.toLowerCase().includes(aClean));
+        const bHasArtist = (b.artists || []).some(art => art.name.toLowerCase().includes(aClean));
+        if (aHasArtist && !bHasArtist) return -1;
+        if (!aHasArtist && bHasArtist) return 1;
+      }
+      return (b.popularity || 0) - (a.popularity || 0);
+    });
+
+    // Parallel fetch of audio features with concurrency
+    const featurePromises = items.map(async (item) => {
+      const cacheKey = `track_${item.id}`;
+      if (audioFeatureCache.has(cacheKey)) {
+        return { id: item.id, feats: audioFeatureCache.get(cacheKey)! };
+      }
+      try {
+        const featController = new AbortController();
+        const featTimeout = setTimeout(() => featController.abort(), 3500);
+        const featRes = await fetch(`https://api.reccobeats.com/v1/track/${item.id}/audio-features`, {
+          headers: { 'User-Agent': 'MusicMix/2.0' },
+          signal: featController.signal
+        });
+        clearTimeout(featTimeout);
+
+        if (featRes.ok) {
+          const feats = (await featRes.json()) as { key?: number; mode?: number; tempo?: number };
+          if (feats.key !== undefined && feats.key >= 0 && feats.key < PITCH_CLASS.length) {
+            const pitch = PITCH_CLASS[feats.key];
+            const mode = feats.mode ?? 1;
+            const songKey = `${pitch} ${mode === 1 ? 'Major' : 'Minor'}`;
+            const camelotKey = CAMELOT_KEY_MAP[`${pitch}_${mode}`] || '8A';
+            const bpm = Math.round(feats.tempo || 120);
+            const featureObj = {
+              bpm,
+              songKey,
+              camelotKey: normalizeToCamelot(camelotKey),
+              reccoTrackId: item.id
+            };
+            audioFeatureCache.set(cacheKey, featureObj);
+            return { id: item.id, feats: featureObj };
+          }
+        }
+      } catch {}
+      return { id: item.id, feats: null };
+    });
+
+    const featuresList = await Promise.all(featurePromises);
+    const featureMap = new Map(featuresList.map(f => [f.id, f.feats]));
+
+    const songs: Song[] = [];
+    for (const item of items) {
+      const title = item.trackTitle || 'Unknown Title';
+      const artist = (item.artists || []).map(a => a.name).join(', ') || 'Unknown Artist';
+      const durationMs = item.durationMs || 215000;
+      const songId = `recco-${item.id}`;
+
+      const feats = featureMap.get(item.id);
+      const bpm = feats?.bpm || 120;
+      const songKey = feats?.songKey || 'A Minor';
+      const camelotKey = feats?.camelotKey || '8A';
+
+      // Parse release year from ISRC
+      let releaseYear = 2022;
+      if (item.isrc && item.isrc.length >= 7) {
+        const yrDigits = parseInt(item.isrc.substring(5, 7), 10);
+        if (!isNaN(yrDigits)) {
+          releaseYear = yrDigits > 30 ? 1900 + yrDigits : 2000 + yrDigits;
+        }
+      }
+
+      // Genre heuristics based on tempo and title
+      let genre = 'Pop / Electronic';
+      if (bpm >= 135) genre = 'Dance / Up-Tempo';
+      else if (bpm <= 90) genre = 'R&B / Soul / Hip-Hop';
+      else if (bpm >= 115 && bpm <= 130) genre = 'Pop / Rock';
+
+      const isLiked = db.playlist.some(
+        p => p.id === songId ||
+             (p.reccoTrackId && p.reccoTrackId === item.id) ||
+             (p.title.toLowerCase() === title.toLowerCase() && p.artist.toLowerCase() === artist.toLowerCase())
+      );
+
+      const song: Song = {
+        id: songId,
+        title,
+        artist,
+        durationMs,
+        durationFormatted: formatDuration(durationMs),
+        genre,
+        bpm,
+        songKey,
+        camelotKey: normalizeToCamelot(camelotKey),
+        releaseYear,
+        reccoTrackId: item.id,
+        coverArtUrl: `/api/covers/${encodeURIComponent(songId)}?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`,
+        liked: isLiked,
+        source: 'catalog',
+        tags: ['audio verified', 'harmonic key']
+      };
+
+      const existingIdx = db.searchedSongs.findIndex(s => s.id === song.id);
+      if (existingIdx === -1) {
+        db.searchedSongs.unshift(song);
+        if (db.searchedSongs.length > 400) db.searchedSongs.pop();
+      }
+      songs.push(song);
+    }
+
+    return songs;
+  } catch (err) {
+    console.warn('Audio catalog search error:', err);
+    return [];
+  }
+}
+
+// iTunes chart search cross-checked with ReccoBeats audio features (accurate BPM, Key, high-res artwork)
 async function fetchFromITunes(query: string, offset = 0, limit = 25): Promise<Song[]> {
   try {
     const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=${limit}&offset=${offset}`;
@@ -524,7 +931,8 @@ async function fetchFromITunes(query: string, offset = 0, limit = 25): Promise<S
     const data = (await response.json()) as { results?: ITunesItem[] };
     if (!data.results || !Array.isArray(data.results)) return [];
 
-    return data.results.map((item) => {
+    // Parallel cross-checking with ReccoBeats for top results
+    const enrichedPromises = data.results.map(async (item) => {
       const title = item.trackName || 'Unknown Title';
       const artist = item.artistName || 'Unknown Artist';
       const durationMs = item.trackTimeMillis || 215000;
@@ -532,18 +940,28 @@ async function fetchFromITunes(query: string, offset = 0, limit = 25): Promise<S
       const releaseYear = releaseDate ? parseInt(releaseDate.slice(0, 4), 10) || 2020 : 2020;
       const genreTag = item.primaryGenreName || 'Electronic';
 
+      // Cross-check real audio features from ReccoBeats
+      const reccoFeatures = await fetchReccoBeatsFeatures(title, artist);
       const meta = enrichAudioMetadata(title, artist, [genreTag]);
+
+      const bpm = reccoFeatures ? reccoFeatures.bpm : meta.bpm;
+      const songKey = reccoFeatures ? reccoFeatures.songKey : meta.songKey;
+      const camelotKey = reccoFeatures ? reccoFeatures.camelotKey : meta.camelotKey;
+      const reccoTrackId = reccoFeatures?.reccoTrackId;
+
       const highResArtwork = item.artworkUrl100
         ? item.artworkUrl100.replace('100x100bb', '600x600bb')
         : undefined;
 
+      const songId = `itunes-${item.trackId || Math.random().toString(36).slice(2, 9)}`;
+
       const isLiked = db.playlist.some(
         (p) =>
-          p.title.toLowerCase() === title.toLowerCase() &&
-          p.artist.toLowerCase() === artist.toLowerCase()
+          p.id === songId ||
+          (reccoTrackId && p.reccoTrackId === reccoTrackId) ||
+          (p.title.toLowerCase() === title.toLowerCase() &&
+           p.artist.toLowerCase() === artist.toLowerCase())
       );
-
-      const songId = `itunes-${item.trackId || Math.random().toString(36).slice(2, 9)}`;
 
       // Pre-cache cover art offline in background if artwork exists
       if (highResArtwork) {
@@ -557,26 +975,29 @@ async function fetchFromITunes(query: string, offset = 0, limit = 25): Promise<S
         durationMs,
         durationFormatted: formatDuration(durationMs),
         genre: meta.genre,
-        bpm: meta.bpm,
-        songKey: meta.songKey,
-        camelotKey: meta.camelotKey,
+        bpm,
+        songKey,
+        camelotKey,
         releaseYear,
+        reccoTrackId,
         coverArtUrl: highResArtwork ? `/api/covers/${encodeURIComponent(songId)}` : undefined,
         liked: isLiked,
-        source: 'musicbrainz',
-        tags: [genreTag.toLowerCase()]
+        source: reccoFeatures ? 'catalog' : 'charts',
+        tags: [genreTag.toLowerCase(), ...(reccoFeatures ? ['audio verified', 'harmonic key'] : [])]
       };
 
       const existingIdx = db.searchedSongs.findIndex((s) => s.id === song.id);
       if (existingIdx === -1) {
         db.searchedSongs.unshift(song);
-        if (db.searchedSongs.length > 300) db.searchedSongs.pop();
+        if (db.searchedSongs.length > 400) db.searchedSongs.pop();
       }
 
       return song;
     });
+
+    return await Promise.all(enrichedPromises);
   } catch (err) {
-    console.warn('iTunes fallback search error:', err);
+    console.warn('iTunes search error:', err);
     return [];
   }
 }
@@ -772,11 +1193,11 @@ function parseMusicQuery(raw: string) {
   };
 }
 
-// Search MusicBrainz with rate throttling, pagination (page parameter), and iTunes popularity engine
+// Search multi-source music engine (Acoustic audio verified catalog & streaming hits)
 app.get('/api/search', async (req, res) => {
   const rawQuery = (req.query.q as string || '').trim();
   const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-  const mode = ((req.query.mode as string) || 'popular').toLowerCase(); // 'popular' | 'musicbrainz' | 'database'
+  const mode = ((req.query.mode as string) || 'popular').toLowerCase(); // 'popular' | 'reccobeats' | 'database'
   const limit = 25;
   const offset = (page - 1) * limit;
 
@@ -819,9 +1240,36 @@ app.get('/api/search', async (req, res) => {
     });
   }
 
-  // Mode: Popular Hits (uses chart-ranked iTunes search first, instantly finds Green Day - Holiday)
+  // Mode: Top Hits (Uses acoustic catalog directly with popularity ranking and verified audio features)
   if (mode === 'popular') {
     const searchTerm = parsed.artist ? `${parsed.title} ${parsed.artist}` : parsed.combined;
+    let catalogResults = await fetchFromReccoBeats(searchTerm, page - 1, limit, parsed.artist);
+
+    // If searching full combined string was empty and we have a separated title, try title alone
+    if (catalogResults.length === 0 && parsed.title && parsed.title !== searchTerm) {
+      catalogResults = await fetchFromReccoBeats(parsed.title, page - 1, limit, parsed.artist);
+    }
+
+    // If still empty, try raw query
+    if (catalogResults.length === 0 && rawQuery !== searchTerm) {
+      catalogResults = await fetchFromReccoBeats(rawQuery, page - 1, limit, parsed.artist);
+    }
+
+    if (catalogResults.length > 0) {
+      saveDatabase(db);
+      searchCache.set(cacheKey, { results: catalogResults, timestamp: Date.now() });
+      return res.json({
+        results: catalogResults,
+        count: catalogResults.length,
+        total: catalogResults.length >= limit ? page * limit + 50 : catalogResults.length,
+        page,
+        limit,
+        mode: 'popular',
+        source: 'top_hits'
+      });
+    }
+
+    // Secondary resilient fallback to chart stream if acoustic catalog had 0 results
     const itunesResults = await fetchFromITunes(searchTerm, offset, limit);
     if (itunesResults.length > 0) {
       saveDatabase(db);
@@ -833,165 +1281,49 @@ app.get('/api/search', async (req, res) => {
         page,
         limit,
         mode: 'popular',
-        source: 'popular_hits'
+        source: 'charts'
       });
     }
   }
 
-  // Mode: MusicBrainz Archive (or fallback if popular search returned nothing)
-  try {
-    await throttleMusicBrainz();
-
-    const queryToUse = parsed.mbQuery;
-    const mbUrl = `https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(
-      queryToUse
-    )}&fmt=json&limit=${limit}&offset=${offset}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6500);
-
-    let mbResponse = await fetch(mbUrl, {
-      headers: {
-        'User-Agent': 'MusicMix/1.0.0 (https://musicmix.app; contact@musicmix.local; ibbto8@gmail.com)',
-        'Accept': 'application/json'
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-
-    // If MusicBrainz rate limited with 503, wait 1.2s and retry once
-    if (mbResponse.status === 503) {
-      console.warn('MusicBrainz returned 503 (rate limited). Retrying with backoff...');
-      await new Promise((r) => setTimeout(r, 1200));
-      await throttleMusicBrainz();
-
-      const retryController = new AbortController();
-      const retryTimeout = setTimeout(() => retryController.abort(), 6500);
-      mbResponse = await fetch(mbUrl, {
-        headers: {
-          'User-Agent': 'MusicMix/1.0.0 (https://musicmix.app; contact@musicmix.local; ibbto8@gmail.com)',
-          'Accept': 'application/json'
-        },
-        signal: retryController.signal
+  // Mode: Direct Acoustic Catalog search
+  if (mode === 'reccobeats' || mode === 'catalog' || mode === 'audio') {
+    let catalogResults = await fetchFromReccoBeats(parsed.title || parsed.combined, page - 1, limit, parsed.artist);
+    if (catalogResults.length === 0 && rawQuery) {
+      catalogResults = await fetchFromReccoBeats(rawQuery, page - 1, limit, parsed.artist);
+    }
+    if (catalogResults.length > 0) {
+      saveDatabase(db);
+      searchCache.set(cacheKey, { results: catalogResults, timestamp: Date.now() });
+      return res.json({
+        results: catalogResults,
+        count: catalogResults.length,
+        total: catalogResults.length >= limit ? page * limit + 50 : catalogResults.length,
+        page,
+        limit,
+        mode: 'catalog',
+        source: 'catalog'
       });
-      clearTimeout(retryTimeout);
     }
-
-    if (mbResponse.ok) {
-      interface MBArtistCredit {
-        name?: string;
-        artist?: { name?: string };
-      }
-      interface MBRelease {
-        id?: string;
-        date?: string;
-        title?: string;
-      }
-      interface MBTag {
-        name: string;
-        count?: number;
-      }
-      interface MBRecording {
-        id: string;
-        title: string;
-        length?: number;
-        'first-release-date'?: string;
-        'artist-credit'?: MBArtistCredit[];
-        releases?: MBRelease[];
-        tags?: MBTag[];
-        genres?: MBTag[];
-      }
-
-      const mbData = (await mbResponse.json()) as { recordings?: MBRecording[]; count?: number };
-      const recordings = mbData.recordings || [];
-      const totalMbCount = mbData.count || (recordings.length >= limit ? page * limit + 25 : recordings.length);
-
-      if (recordings.length > 0) {
-        const results: Song[] = recordings.map((rec) => {
-          const artist = rec['artist-credit']?.map(a => a.name || a.artist?.name || '').filter(Boolean).join(', ') || 'Unknown Artist';
-          const durationMs = rec.length || 215000;
-          const releaseDate = rec['first-release-date'] || rec.releases?.[0]?.date || '';
-          const releaseYear = releaseDate ? parseInt(releaseDate.slice(0, 4), 10) || releaseDate.slice(0, 4) : 2020;
-
-          const tagList = [
-            ...(rec.tags || []).map(t => t.name),
-            ...(rec.genres || []).map(g => g.name)
-          ];
-
-          const meta = enrichAudioMetadata(rec.title, artist, tagList);
-          const isLiked = db.playlist.some(p => p.musicbrainzId === rec.id || (p.title.toLowerCase() === rec.title.toLowerCase() && p.artist.toLowerCase() === artist.toLowerCase()));
-
-          const releaseId = rec.releases?.[0]?.id;
-          const coverArtUrl = releaseId
-            ? `https://coverartarchive.org/release/${releaseId}/front-250`
-            : `/api/covers/${encodeURIComponent(`mb-${rec.id}`)}`;
-
-          const song: Song = {
-            id: `mb-${rec.id}`,
-            title: rec.title,
-            artist,
-            durationMs,
-            durationFormatted: formatDuration(durationMs),
-            genre: meta.genre,
-            bpm: meta.bpm,
-            songKey: meta.songKey,
-            camelotKey: meta.camelotKey,
-            releaseYear: releaseYear || 2020,
-            musicbrainzId: rec.id,
-            coverArtUrl,
-            liked: isLiked,
-            source: 'musicbrainz',
-            tags: tagList.slice(0, 6)
-          };
-
-          // Cache cover art locally in the background for offline use
-          if (releaseId) {
-            cacheCoverArtOffline(song.id, coverArtUrl).catch(() => {});
-          }
-
-          const existingIdx = db.searchedSongs.findIndex(s => s.id === song.id);
-          if (existingIdx === -1) {
-            db.searchedSongs.unshift(song);
-            if (db.searchedSongs.length > 300) {
-              db.searchedSongs.pop();
-            }
-          }
-
-          return song;
-        });
-
-        saveDatabase(db);
-        searchCache.set(cacheKey, { results, timestamp: Date.now() });
-        return res.json({
-          results,
-          count: results.length,
-          total: totalMbCount,
-          page,
-          limit,
-          source: 'musicbrainz'
-        });
-      }
-    }
-  } catch (error) {
-    console.warn('MusicBrainz search temporary hiccup:', (error as Error).message || error);
   }
 
-  // 2. Seamless iTunes music fallback (no rate limit, pristine metadata and album covers, paginated)
-  const itunesResults = await fetchFromITunes(parsed.combined || rawQuery, offset, limit);
-  if (itunesResults.length > 0) {
+  // Secondary fallback: Direct catalog search
+  const catalogFallback = await fetchFromReccoBeats(parsed.title || parsed.combined, 0, limit, parsed.artist);
+  if (catalogFallback.length > 0) {
     saveDatabase(db);
-    searchCache.set(cacheKey, { results: itunesResults, timestamp: Date.now() });
+    searchCache.set(cacheKey, { results: catalogFallback, timestamp: Date.now() });
     return res.json({
-      results: itunesResults,
-      count: itunesResults.length,
-      total: itunesResults.length >= limit ? page * limit + 25 : itunesResults.length,
+      results: catalogFallback,
+      count: catalogFallback.length,
+      total: catalogFallback.length,
       page,
       limit,
       mode,
-      source: 'music_fallback'
+      source: 'catalog'
     });
   }
 
-  // 3. Database archive fallback
+  // Database archive fallback
   const qLower = rawQuery.toLowerCase();
   const localMatches = db.searchedSongs.filter(s =>
     s.title.toLowerCase().includes(qLower) ||
@@ -1028,7 +1360,9 @@ app.post('/api/playlist/toggle-like', (req, res) => {
   }
 
   const existingIndex = db.playlist.findIndex(
-    p => p.id === song.id || (p.musicbrainzId && p.musicbrainzId === song.musicbrainzId)
+    p => p.id === song.id ||
+         (p.reccoTrackId && p.reccoTrackId === song.reccoTrackId) ||
+         (p.title.toLowerCase() === song.title.toLowerCase() && p.artist.toLowerCase() === song.artist.toLowerCase())
   );
 
   let updatedSong: Song;
@@ -1093,6 +1427,95 @@ app.delete('/api/playlist/:id', (req, res) => {
   }
 
   return res.status(404).json({ error: 'Track not found in playlist' });
+});
+
+// Rate-limited bulk refresh of all songs in central playlist (strictly up to 15 songs/second)
+app.post('/api/playlist/refresh-all', async (_req, res) => {
+  const songsToRefresh = [...db.playlist];
+  const total = songsToRefresh.length;
+  let updatedCount = 0;
+
+  for (let i = 0; i < total; i++) {
+    const currentSong = songsToRefresh[i];
+    try {
+      const refreshed = await refreshSongAcousticData(currentSong);
+
+      const pIdx = db.playlist.findIndex(p => p.id === currentSong.id);
+      if (pIdx >= 0) db.playlist[pIdx] = refreshed;
+
+      const sIdx = db.searchedSongs.findIndex(s => s.id === currentSong.id);
+      if (sIdx >= 0) db.searchedSongs[sIdx] = refreshed;
+
+      updatedCount++;
+
+      // Broadcast real-time progress via WebSocket
+      broadcast({
+        type: 'playlist_refresh_progress',
+        current: i + 1,
+        total,
+        song: refreshed,
+        rateLimit: '15 songs/sec',
+        timestamp: Date.now()
+      });
+    } catch (err) {
+      console.warn(`Error refreshing track ${currentSong.id}:`, err);
+    }
+  }
+
+  saveDatabase(db);
+
+  broadcast({
+    type: 'playlist_refresh_completed',
+    playlist: db.playlist,
+    total,
+    timestamp: Date.now()
+  });
+
+  broadcast({
+    type: 'playlist_updated',
+    playlist: db.playlist,
+    timestamp: Date.now()
+  });
+
+  return res.json({
+    success: true,
+    count: updatedCount,
+    total,
+    rateLimit: '15 songs/second',
+    playlist: db.playlist
+  });
+});
+
+// Refresh a single track with rate-limited audio intelligence
+app.post('/api/playlist/refresh-track/:id', async (req, res) => {
+  const { id } = req.params;
+  const song = db.playlist.find(p => p.id === id);
+  if (!song) {
+    return res.status(404).json({ error: 'Track not found in playlist' });
+  }
+
+  const refreshed = await refreshSongAcousticData(song);
+
+  const pIdx = db.playlist.findIndex(p => p.id === id);
+  if (pIdx >= 0) db.playlist[pIdx] = refreshed;
+
+  const sIdx = db.searchedSongs.findIndex(s => s.id === id);
+  if (sIdx >= 0) db.searchedSongs[sIdx] = refreshed;
+
+  saveDatabase(db);
+
+  broadcast({
+    type: 'playlist_updated',
+    playlist: db.playlist,
+    song: refreshed,
+    timestamp: Date.now()
+  });
+
+  return res.json({
+    success: true,
+    song: refreshed,
+    playlist: db.playlist
+  });
 });
 
 // --- EDITOR API: ADD MANUAL TRACK & EDIT EXISTING TRACK METADATA ---

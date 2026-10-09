@@ -1,6 +1,6 @@
 {
   "name": "MusicMix",
-  "description": "Real-time music search, central playlist curation, and harmonic randomizer powered by MusicBrainz.",
+  "description": "Real-time music search, multi-source audio intelligence, central playlist curation, and harmonic randomizer.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

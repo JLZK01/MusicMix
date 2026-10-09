@@ -40,7 +40,7 @@ export const SearchPage: React.FC<SearchPageProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Song[]>([]);
   const [searchSource, setSearchSource] = useState<string>('');
-  const [searchEngine, setSearchEngine] = useState<'popular' | 'musicbrainz' | 'database'>('popular');
+  const [searchEngine, setSearchEngine] = useState<'popular' | 'reccobeats' | 'database'>('popular');
   const [activeTab, setActiveTab] = useState<'search' | 'database'>('search');
   const [recentNotification, setRecentNotification] = useState<string | null>(null);
 
@@ -132,7 +132,7 @@ export const SearchPage: React.FC<SearchPageProps> = ({
     'Sub Focus'
   ];
 
-  const handleSearch = async (queryToUse?: string, pageToUse = 1, engineToUse?: 'popular' | 'musicbrainz' | 'database') => {
+  const handleSearch = async (queryToUse?: string, pageToUse = 1, engineToUse?: 'popular' | 'reccobeats' | 'database') => {
     const q = (queryToUse !== undefined ? queryToUse : searchQuery).trim();
     if (!q) return;
 
@@ -174,7 +174,8 @@ export const SearchPage: React.FC<SearchPageProps> = ({
 
   const isSongInPlaylist = (song: Song): boolean => {
     return playlist.some(
-      p => p.id === song.id || (p.musicbrainzId && p.musicbrainzId === song.musicbrainzId)
+      p => p.id === song.id || (p.reccoTrackId && p.reccoTrackId === song.reccoTrackId) ||
+           (p.title.toLowerCase() === song.title.toLowerCase() && p.artist.toLowerCase() === song.artist.toLowerCase())
     );
   };
 
@@ -277,9 +278,9 @@ export const SearchPage: React.FC<SearchPageProps> = ({
               <Radio className="w-4 h-4 animate-pulse" />
               <span>
                 {searchEngine === 'popular'
-                  ? 'POPULAR HITS & CHART ENGINE'
-                  : searchEngine === 'musicbrainz'
-                  ? 'MUSICBRAINZ OPEN ARCHIVE'
+                  ? 'TOP HITS & ACOUSTIC CATALOG'
+                  : searchEngine === 'reccobeats'
+                  ? 'GLOBAL AUDIO CATALOG'
                   : 'LOCAL DATABASE ARCHIVE'}
               </span>
             </div>
@@ -296,7 +297,7 @@ export const SearchPage: React.FC<SearchPageProps> = ({
                     ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
-                title="Ranks by worldwide popularity & streaming charts (finds Green Day - Holiday directly)"
+                title="Ranks by worldwide popularity with verified acoustic features and high-resolution artwork"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                 <span>Top Hits</span>
@@ -304,18 +305,18 @@ export const SearchPage: React.FC<SearchPageProps> = ({
 
               <button
                 onClick={() => {
-                  setSearchEngine('musicbrainz');
-                  if (searchQuery) handleSearch(searchQuery, 1, 'musicbrainz');
+                  setSearchEngine('reccobeats');
+                  if (searchQuery) handleSearch(searchQuery, 1, 'reccobeats');
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
-                  searchEngine === 'musicbrainz'
+                  searchEngine === 'reccobeats'
                     ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
-                title="Search MusicBrainz open encyclopedic database and recordings"
+                title="Search global audio catalog with verified tempo, Camelot key, and acoustic metrics"
               >
                 <Radio className="w-3.5 h-3.5 text-cyan-400" />
-                <span>MusicBrainz</span>
+                <span>Audio Catalog</span>
               </button>
 
               <button
@@ -342,11 +343,11 @@ export const SearchPage: React.FC<SearchPageProps> = ({
           <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
             {searchEngine === 'popular' ? (
               <span>
-                <strong className="text-amber-300">Top Hits Mode:</strong> Ranks songs by worldwide commercial popularity and streaming relevance (e.g. searching &ldquo;Holiday&rdquo; ranks <span className="text-zinc-200 font-semibold">Green Day</span>, <span className="text-zinc-200 font-semibold">Madonna</span>, & <span className="text-zinc-200 font-semibold">Lil Nas X</span> at the top with high-res artwork).
+                <strong className="text-amber-300">Top Hits Mode:</strong> Searches top-ranked tracks worldwide with verified acoustic BPM, Camelot harmonic keys, and high-resolution artwork.
               </span>
-            ) : searchEngine === 'musicbrainz' ? (
+            ) : searchEngine === 'reccobeats' ? (
               <span>
-                <strong className="text-cyan-300">MusicBrainz Mode:</strong> Searches the open community discography with deep audio key, BPM, and acoustic tags. (Note: MusicBrainz uses text-matching scoring, so generic words like &ldquo;Holiday&rdquo; return 50,000+ unranked recordings).
+                <strong className="text-cyan-300">Audio Catalog Mode:</strong> Searches the global acoustic catalog directly with verified BPM, harmonic Camelot keys, danceability, and acoustic energy.
               </span>
             ) : (
               <span>
@@ -365,8 +366,8 @@ export const SearchPage: React.FC<SearchPageProps> = ({
                 onKeyDown={handleKeyDown}
                 placeholder={
                   searchEngine === 'popular'
-                    ? 'Search popular tracks, artists, or hits (e.g. Holiday, Green Day, Daft Punk, Blinding Lights)...'
-                    : 'Search MusicBrainz database (e.g. Holiday Green Day, Strobe, Daft Punk)...'
+                    ? 'Search top hits, popular tracks, or artists (e.g. Holiday, Paramore, Daft Punk, Blinding Lights)...'
+                    : 'Search audio catalog (e.g. That\'s What You Get, Strobe, Daft Punk, Taylor Swift)...'
                 }
                 className="w-full bg-zinc-900/95 border border-zinc-700/80 focus:border-cyan-500 rounded-xl px-4 py-3.5 pl-11 pr-28 text-white placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/20 shadow-inner transition font-medium"
               />
@@ -500,15 +501,15 @@ export const SearchPage: React.FC<SearchPageProps> = ({
         <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 font-mono">
           {searchSource && (
             <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400">
-              <span className={`w-1.5 h-1.5 rounded-full ${searchSource === 'popular_hits' ? 'bg-amber-400' : 'bg-cyan-400'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${searchSource === 'popular_hits' || searchSource === 'charts' ? 'bg-amber-400' : 'bg-cyan-400'}`} />
               <span>
                 Source: {
-                  searchSource === 'popular_hits'
-                    ? 'Top Hits (Worldwide Charts)'
-                    : searchSource === 'musicbrainz'
-                    ? 'MusicBrainz Open Archive'
+                  searchSource === 'popular_hits' || searchSource === 'top_hits' || searchSource === 'charts'
+                    ? 'Top Hits (Audio Intelligence)'
+                    : searchSource === 'reccobeats' || searchSource === 'catalog'
+                    ? 'Global Audio Engine'
                     : searchSource === 'music_fallback'
-                    ? 'Top Hits Fallback'
+                    ? 'Audio Intelligence Engine'
                     : 'Local DB Storage'
                 }
               </span>
@@ -643,8 +644,8 @@ export const SearchPage: React.FC<SearchPageProps> = ({
       {isSearching ? (
         <div className="py-20 flex flex-col items-center justify-center text-center space-y-3">
           <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
-          <p className="text-sm text-zinc-300 font-medium">Querying MusicBrainz Web Service...</p>
-          <p className="text-xs text-zinc-500">Analyzing acoustic metadata, BPM, keys, and release details</p>
+          <p className="text-sm text-zinc-300 font-medium">Analyzing acoustic metadata & harmonic keys...</p>
+          <p className="text-xs text-zinc-500">Analyzing acoustic metadata, verified BPM, Camelot keys, and release details</p>
         </div>
       ) : filteredSongs.length === 0 ? (
         <div className="py-16 rounded-xl bg-zinc-900/40 border border-zinc-800 text-center space-y-3">

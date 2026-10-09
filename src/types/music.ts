@@ -9,16 +9,18 @@ export interface Song {
   songKey: string;
   camelotKey: string;
   releaseYear: number | string;
-  musicbrainzId?: string;
+  reccoTrackId?: string;
   coverArtUrl?: string;
   liked: boolean;
   addedAt?: number;
   likesCount?: number;
-  source?: 'musicbrainz' | 'database' | 'seed' | 'manual';
+  source?: 'catalog' | 'audio_engine' | 'reccobeats' | 'database' | 'seed' | 'manual' | 'charts';
   tags?: string[];
+  lastRefreshedAt?: number;
 }
 
 export type RandomizeFilterOption = 'BPM' | 'KEY' | 'Genre';
+export type TonalityFilterOption = 'minor' | 'mixed' | 'major';
 
 export interface HarmonicMatchResult {
   song: Song;
@@ -66,7 +68,7 @@ export interface SongMix {
 }
 
 export interface ClientSyncMessage {
-  type: 'init' | 'playlist_updated' | 'song_liked' | 'song_unliked' | 'active_users' | 'database_restored' | 'history_updated' | 'mixes_updated' | 'ping';
+  type: 'init' | 'playlist_updated' | 'song_liked' | 'song_unliked' | 'active_users' | 'database_restored' | 'history_updated' | 'mixes_updated' | 'playlist_refresh_progress' | 'playlist_refresh_completed' | 'ping';
   playlist?: Song[];
   mixes?: SongMix[];
   mix?: SongMix;
@@ -74,4 +76,7 @@ export interface ClientSyncMessage {
   activeCount?: number;
   timestamp?: number;
   actorId?: string;
+  current?: number;
+  total?: number;
+  rateLimit?: string;
 }

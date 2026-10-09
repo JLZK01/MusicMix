@@ -134,6 +134,17 @@ export default function App() {
               setTimeout(() => setLiveSyncToast(null), 3000);
             }
             fetchDatabaseSongs();
+          } else if (msg.type === 'playlist_refresh_progress') {
+            if (msg.song) {
+              setPlaylist(prev => prev.map(p => p.id === msg.song!.id ? msg.song! : p));
+            }
+            window.dispatchEvent(new CustomEvent('musicmix:refresh_progress', { detail: msg }));
+          } else if (msg.type === 'playlist_refresh_completed') {
+            if (msg.playlist) {
+              setPlaylist(msg.playlist);
+            }
+            window.dispatchEvent(new CustomEvent('musicmix:refresh_completed', { detail: msg }));
+            fetchDatabaseSongs();
           } else if (msg.type === 'mixes_updated') {
             if (msg.mixes) {
               setMixes(msg.mixes);
@@ -326,6 +337,7 @@ export default function App() {
                 selectedTrack={selectedTrack}
                 onSelectTrack={handleSelectTrack}
                 onNavigateToSearch={() => setActiveTab('search')}
+                onPlaylistUpdated={handlePlaylistUpdated}
               />
             )}
 

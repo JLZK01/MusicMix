@@ -183,9 +183,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80 backdrop-blur-sm">
               <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono mb-1">
                 <Radio className="w-3.5 h-3.5" />
-                <span>MUSICBRAINZ API</span>
+                <span>AUDIO INTELLIGENCE</span>
               </div>
-              <p className="text-xs text-zinc-300">Live query with BPM, Key, Duration, and Release Year detection.</p>
+              <p className="text-xs text-zinc-300">Live multi-source cross-checking with verified BPM, Key, Mode, and Acoustic features.</p>
             </div>
 
             <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80 backdrop-blur-sm">

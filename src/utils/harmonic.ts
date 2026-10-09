@@ -1,4 +1,4 @@
-import { Song, RandomizeFilterOption, HarmonicMatchResult } from '../types/music';
+import { Song, RandomizeFilterOption, HarmonicMatchResult, TonalityFilterOption } from '../types/music';
 
 // Camelot Wheel mapping and utilities
 export const CAMELOT_MAP: Record<string, { camelot: string; standard: string; color: string }> = {
@@ -246,24 +246,45 @@ export function evaluateMatch(
   };
 }
 
+export function getSongTonality(song: Song): 'minor' | 'major' | 'unknown' {
+  const cam = normalizeToCamelot(song.camelotKey || song.songKey);
+  if (cam.endsWith('A')) return 'minor';
+  if (cam.endsWith('B')) return 'major';
+  const k = (song.songKey || '').toLowerCase();
+  if (k.includes('minor') || k.includes('min')) return 'minor';
+  if (k.includes('major') || k.includes('maj')) return 'major';
+  return 'unknown';
+}
+
 /**
  * Recommends multiple tracks (slider 1 to 20):
  * - If filtered: sorts in descending order of match score, returns up to `count` tracks.
  * - If random: shuffles candidates and sorts them in descending order, returning up to `count` tracks.
+ * - Supports tonality filter: 'minor' (A keys), 'major' (B keys), or 'mixed' (all).
  */
 export function recommendTracksFromPlaylist(
   referenceSong: Song,
   playlist: Song[],
   activeFilters: RandomizeFilterOption[],
   count: number,
-  isPureRandom: boolean = false
+  isPureRandom: boolean = false,
+  tonalityFilter: TonalityFilterOption = 'mixed'
 ): HarmonicMatchResult[] {
-  const candidates = playlist.filter(s => s.id !== referenceSong.id);
+  let candidates = playlist.filter(s => s.id !== referenceSong.id);
   if (candidates.length === 0) {
     if (playlist.length > 0) {
       return [evaluateMatch(referenceSong, playlist[0], activeFilters)];
     }
     return [];
+  }
+
+  // Apply tonality filter slider (minor / major / mixed)
+  if (tonalityFilter !== 'mixed') {
+    const tonalityFiltered = candidates.filter(s => getSongTonality(s) === tonalityFilter);
+    // Use tonality-filtered subset if any matches exist in the playlist
+    if (tonalityFiltered.length > 0) {
+      candidates = tonalityFiltered;
+    }
   }
 
   const requestedCount = Math.min(20, Math.max(1, count));
@@ -273,7 +294,13 @@ export function recommendTracksFromPlaylist(
     const shuffled = [...candidates].sort(() => Math.random() - 0.5);
     const chosen = shuffled.slice(0, requestedCount);
     // Evaluate and sort in descending order as requested
-    const evaluated = chosen.map(cand => evaluateMatch(referenceSong, cand, []));
+    const evaluated = chosen.map(cand => {
+      const match = evaluateMatch(referenceSong, cand, []);
+      if (tonalityFilter !== 'mixed' && getSongTonality(cand) === tonalityFilter) {
+        match.reasons.unshift(`Tonality match: ${tonalityFilter.toUpperCase()}`);
+      }
+      return match;
+    });
     evaluated.sort((a, b) => b.totalScore - a.totalScore);
     return evaluated;
   }
@@ -281,7 +308,13 @@ export function recommendTracksFromPlaylist(
   // Filtered recommendation: evaluate all candidates and sort descending
   // Shuffle pool first to prevent deterministic insertion bias
   const pool = [...candidates].sort(() => Math.random() - 0.5);
-  const evaluated = pool.map(cand => evaluateMatch(referenceSong, cand, activeFilters));
+  const evaluated = pool.map(cand => {
+    const match = evaluateMatch(referenceSong, cand, activeFilters);
+    if (tonalityFilter !== 'mixed' && getSongTonality(cand) === tonalityFilter) {
+      match.reasons.unshift(`Tonality match: ${tonalityFilter.toUpperCase()}`);
+    }
+    return match;
+  });
   evaluated.sort((a, b) => {
     if (b.totalScore !== a.totalScore) {
       return b.totalScore - a.totalScore;
